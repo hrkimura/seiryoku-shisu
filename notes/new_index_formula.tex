@@ -56,14 +56,20 @@ $$W_\ell(T) = \sqrt{N_\ell(T)}$$
 
 \textbf{$W_\ell(T)$は政党別のシェアを一切含まない、階層ごとのスカラーの重みに
 すぎない}。政党別の情報は、階層内の加重平均シェア$\phi_p^\ell(T)$として別に
-計算する。
+計算するが、ここでは$N_\ell(T)$ではなく人口$P_e$だけの単純合計$\Pi_\ell(T)$を
+分母に使う。
 
-$$\phi_p^\ell(T) = \frac{\displaystyle\sum_{e\in E_\ell(T)} n_eP_e\,\phi_p(e)}{N_\ell(T)}$$
+$$\Pi_\ell(T) = \sum_{e\in E_\ell(T)} P_e, \qquad
+\phi_p^\ell(T) = \frac{\displaystyle\sum_{e\in E_\ell(T)} P_e\,\phi_p(e)}{\Pi_\ell(T)}$$
 
-これは階層$\ell$の中で、個々のイベントを(平方根を取らない)$n_eP_e$そのもので
+これは階層$\ell$の中で、個々のイベントを人口$P_e$だけで(議席数$n_e$は掛けずに)
 加重平均した政党別シェアであり、同じ人口をいくつの自治体に分割しても値が
 変わらない(加重平均の性質上、単位を分割・統合しても総和と分母がともに
-不変なため)。
+不変なため)。$n_e$を掛けない理由(階層内の有権者を1人ランダムに選び、
+その代表$n_e$人からさらに1人を選ぶ、という抽選と一致させると$n_e$は既に
+吸収される、という導出)は design\_document.tex \S2.2.2 に譲る。$N_\ell(T)$と
+$\Pi_\ell(T)$は同じ$E_\ell(T)$の和だが分母に使う量が異なる別々の合計であり、
+$N_\ell(T)$は階層間の重み$W_\ell(T)$のためだけに使う。
 
 最後に、階層の重み$W_\ell(T)$で階層間シェア$\phi_p^\ell(T)$を合成する。
 
@@ -72,27 +78,29 @@ $$C_p(T) = \frac{\displaystyle\sum_{\ell\in L} W_\ell(T)\,\phi_p^\ell(T)}
 
 \section{閉じた形への整理}
 
-$W_\ell(T)\phi_p^\ell(T) = \sqrt{N_\ell(T)}\cdot\dfrac{\sum_e n_eP_e\phi_p(e)}{N_\ell(T)}
-= \dfrac{1}{\sqrt{N_\ell(T)}}\sum_{e\in E_\ell(T)} n_eP_e\phi_p(e)$なので、
+$W_\ell(T)\phi_p^\ell(T) = \sqrt{N_\ell(T)}\cdot\dfrac{\sum_e P_e\phi_p(e)}{\Pi_\ell(T)}
+= \dfrac{\sqrt{N_\ell(T)}}{\Pi_\ell(T)}\sum_{e\in E_\ell(T)} P_e\phi_p(e)$なので、
 $C_p(T)$は次の閉じた形にまとめられる。
 
-$$C_p(T) = \frac{\displaystyle\sum_{\ell\in L} \frac{1}{\sqrt{N_\ell(T)}}
-                  \sum_{e\in E_\ell(T)} n_eP_e\,\phi_p(e)}
+$$C_p(T) = \frac{\displaystyle\sum_{\ell\in L} \frac{\sqrt{N_\ell(T)}}{\Pi_\ell(T)}
+                  \sum_{e\in E_\ell(T)} P_e\,\phi_p(e)}
                   {\displaystyle\sum_{\ell\in L} \sqrt{N_\ell(T)}}$$
 
-つまり、個々のイベントの生の寄与$n_eP_e\phi_p(e)$を、そのイベントが属する
-階層の正規化定数$\sqrt{N_\ell(T)}$で割ってから全階層について合計し、
-分母も同じ$\sqrt{N_\ell(T)}$の合計にする、という形になる。階層内では
-素朴な$n_eP_e$加重平均(分割の細かさに依存しない)、階層間だけに
-ペンローズ的な平方根の縮小($\sqrt{N_\ell(T)}$)をかける、という2段構成である。
+$N_\ell(T)$と$\Pi_\ell(T)$が同じ量(どちらも$n_eP_e$の和)だった旧設計では
+これが$1/\sqrt{N_\ell(T)}$という単一の正規化定数に潰れたが、階層内の加重から
+$n_e$を外した現在は、階層の正規化定数$\sqrt{N_\ell(T)}/\Pi_\ell(T)$として
+$N_\ell(T)$(議席数込み、$W_\ell(T)$用)と$\Pi_\ell(T)$(人口のみ、$\phi_p^\ell(T)$の
+分母)を別々に保つ必要がある。階層内では素朴な$P_e$加重平均(分割の細かさに
+依存しない)、階層間だけにペンローズ的な平方根の縮小($\sqrt{N_\ell(T)}$)を
+かける、という2段構成である点は変わらない。
 
 \section{性質の確認}
 
 \begin{itemize}
-  \item \textbf{行政区画の粒度に依存しない}: 同じ$N_\ell(T)$(総人口×総議席)を
-    自治体1つで実現しても100自治体に分割して実現しても、$\phi_p^\ell(T)$も
-    $W_\ell(T)$も変わらない。市区町村議会が「自治体数が多いから」というだけの
-    理由で指数を支配することはなくなる。
+  \item \textbf{行政区画の粒度に依存しない}: 同じ$\Pi_\ell(T)$(総人口)・
+    $N_\ell(T)$(総人口×総議席)を自治体1つで実現しても100自治体に分割して
+    実現しても、$\phi_p^\ell(T)$も$W_\ell(T)$も変わらない。市区町村議会が
+    「自治体数が多いから」というだけの理由で指数を支配することはなくなる。
   \item \textbf{階層をまたぐ縮小はペンローズ則のまま}: 6階層それぞれを
     「1つの代表機関」とみなし、その機関が代表する総量$N_\ell(T)$の平方根を
     重みとする。これは元のペンローズ則の適用範囲(1つの機関の中での重み付け)
@@ -115,6 +123,9 @@ $$C_p(T) = \frac{\displaystyle\sum_{\ell\in L} \frac{1}{\sqrt{N_\ell(T)}}
 結果であり、フロー指標としての設計方針(\S1)には整合するが、月によって
 階層間の重みが大きく揺れること自体は現行設計と同様に残る。
 
-また、この再定義を採用する場合、105か月分の履歴の再計算・design\_document.tex
-\S2の書き直し・既存note記事の記述修正が必要になる(未実施)。
+この再定義は採用済みであり、105か月分の履歴の再計算・design\_document.tex
+\S2の書き直し・既存note記事の記述修正はいずれも反映済みである。ただし
+階層内の加重は、本稿執筆時点の$n_eP_e$からその後さらに$P_e$のみへ改めており
+(議席数$n_e$は人口に比例しないため、$n_eP_e$では大都市を過大評価する)、
+最新の式と導出の根拠はdesign\_document.tex \S2.2.2を参照されたい。
 \end{document}

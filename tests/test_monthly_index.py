@@ -18,13 +18,12 @@ def test_months_back_crosses_year_boundary():
 
 
 def test_snapshots_from_windows_sums_entries_across_the_window():
-    # (level_type, raw_weight=n_e*P_e, shares)。1月・3月とも同じraw_weightの
-    # 単一イベントなので、階層内合計→平方根の新定義でも旧定義と同じ結果になる
-    # (単一イベントの階層では$\\sqrt{a}$と$\\sqrt{a}$で差が出ないため)。
+    # (level_type, P_e, n_e, shares)。1月・3月とも同じN_ell(=n_e*P_e=16)の
+    # 単一イベントなので、階層間の重みはどちらも同じsqrt(16)=4になる。
     entries_by_month = {
-        (2024, 1): [("衆院選", 16.0, {"自由民主党": 1.0})],
+        (2024, 1): [("衆院選", 16.0, 1.0, {"自由民主党": 1.0})],
         (2024, 2): [],
-        (2024, 3): [("市区町村議会", 16.0, {"公明党": 1.0})],
+        (2024, 3): [("市区町村議会", 16.0, 1.0, {"公明党": 1.0})],
     }
     months = [(2024, 1), (2024, 2), (2024, 3)]
 
@@ -49,13 +48,13 @@ def test_snapshots_from_windows_sums_entries_across_the_window():
 
 
 def test_level_aggregate_is_invariant_to_how_a_level_is_partitioned():
-    # 同じ総量(n_e*P_e=100)を1自治体にまとめても、2自治体(60+40)に分割しても、
-    # 階層内のphiと重みシェアは変わらない——階層内で先に合計してから平方根を
-    # 取る新定義の核心(2026-09に再設計、notes/new_index_formula.tex参照)。
-    one_unit = [("市区町村議会", 100.0, {"自由民主党": 0.7, "公明党": 0.3})]
+    # 同じ総人口(P=100、n_e=1)を1自治体にまとめても、2自治体(60+40)に分割
+    # しても、階層内のphiと重みシェアは変わらない——階層内はP_eだけの加重平均
+    # という定義の核心(2026-09に再設計、notes/new_index_formula.tex参照)。
+    one_unit = [("市区町村議会", 100.0, 1.0, {"自由民主党": 0.7, "公明党": 0.3})]
     two_units = [
-        ("市区町村議会", 60.0, {"自由民主党": 0.7, "公明党": 0.3}),
-        ("市区町村議会", 40.0, {"自由民主党": 0.7, "公明党": 0.3}),
+        ("市区町村議会", 60.0, 1.0, {"自由民主党": 0.7, "公明党": 0.3}),
+        ("市区町村議会", 40.0, 1.0, {"自由民主党": 0.7, "公明党": 0.3}),
     ]
     c_p_one, share_one = monthly_index._level_aggregate(one_unit)
     c_p_two, share_two = monthly_index._level_aggregate(two_units)
@@ -64,11 +63,11 @@ def test_level_aggregate_is_invariant_to_how_a_level_is_partitioned():
 
 
 def test_level_aggregate_combines_levels_via_sqrt_of_level_totals():
-    # 都道府県知事(raw=100)と市区町村議会(raw=400)の2階層。
-    # 階層の重みはsqrt(100)=10とsqrt(400)=20なので、10:20の比で合成される。
+    # 都道府県知事(N_ell=n_e*P_e=1*100=100)と市区町村議会(N_ell=1*400=400)の
+    # 2階層。階層の重みはsqrt(100)=10とsqrt(400)=20なので、10:20の比で合成される。
     entries = [
-        ("都道府県知事", 100.0, {"自由民主党": 1.0}),
-        ("市区町村議会", 400.0, {"公明党": 1.0}),
+        ("都道府県知事", 100.0, 1.0, {"自由民主党": 1.0}),
+        ("市区町村議会", 400.0, 1.0, {"公明党": 1.0}),
     ]
     c_p, share = monthly_index._level_aggregate(entries)
     assert c_p["自由民主党"] == pytest.approx(10 / 30)
@@ -77,15 +76,44 @@ def test_level_aggregate_combines_levels_via_sqrt_of_level_totals():
     assert share["市区町村議会"] == pytest.approx(2 / 3)
 
 
-def test_level_aggregate_weights_events_within_a_level_by_raw_ne_pe_not_sqrt():
-    # 階層内は平方根を取らない加重平均であることの確認(60:40の比のまま)。
+def test_level_aggregate_weights_events_within_a_level_by_population_only():
+    # 階層内はP_eだけの加重平均であることの確認(60:40の比のまま、n_eは無視)。
     entries = [
-        ("市区町村議会", 60.0, {"自由民主党": 1.0}),
-        ("市区町村議会", 40.0, {"公明党": 1.0}),
+        ("市区町村議会", 60.0, 1.0, {"自由民主党": 1.0}),
+        ("市区町村議会", 40.0, 1.0, {"公明党": 1.0}),
     ]
     c_p, _ = monthly_index._level_aggregate(entries)
     assert c_p["自由民主党"] == pytest.approx(0.6)
     assert c_p["公明党"] == pytest.approx(0.4)
+
+
+def test_level_aggregate_within_level_share_ignores_n_e():
+    # n_eP_eではなくP_eだけで階層内シェアを決めることの確認(2026-09に
+    # ユーザー指摘: 議員定数n_eは人口にほぼ比例しないため、n_eP_eを使うと
+    # 大自治体の影響が過大になる)。同じ人口(P=50ずつ)でも議席数(n_e)が
+    # 大きく異なる2自治体を混ぜても、階層内シェアは人口比の50:50のままになる。
+    entries = [
+        ("市区町村議会", 50.0, 1.0, {"自由民主党": 1.0}),   # 小さな議会(n_e=1)
+        ("市区町村議会", 50.0, 100.0, {"公明党": 1.0}),  # 同じ人口だが議席数100の議会
+    ]
+    c_p, _ = monthly_index._level_aggregate(entries)
+    assert c_p["自由民主党"] == pytest.approx(0.5)
+    assert c_p["公明党"] == pytest.approx(0.5)
+
+
+def test_level_aggregate_cross_level_weight_uses_n_e():
+    # 一方、階層をまたぐ重みW_ellにはn_eが効くことの確認。人口は同じでも
+    # 議席数が大きい階層の方がN_ell=n_e*P_eが大きくなり、W_ellも大きくなる。
+    entries = [
+        ("都道府県知事", 100.0, 1.0, {"自由民主党": 1.0}),
+        ("都道府県議会", 100.0, 4.0, {"公明党": 1.0}),
+    ]
+    c_p, share = monthly_index._level_aggregate(entries)
+    # N_ell: 知事=100, 議会=400。W_ell: sqrt(100)=10, sqrt(400)=20。10:20の比。
+    assert c_p["自由民主党"] == pytest.approx(10 / 30)
+    assert c_p["公明党"] == pytest.approx(20 / 30)
+    assert share["都道府県知事"] == pytest.approx(1 / 3)
+    assert share["都道府県議会"] == pytest.approx(2 / 3)
 
 
 def test_level_aggregate_empty_when_no_entries():
