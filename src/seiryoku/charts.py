@@ -27,6 +27,9 @@ PARTY_ORDER = [
 
 LEVEL_ORDER = ["衆院選", "参院選", "都道府県知事", "都道府県議会", "市区町村長", "市区町村議会"]
 LEVEL_COLORS = ["#c0392b", "#e67e22", "#8e44ad", "#2980b9", "#27ae60", "#7f8c8d"]
+# LEVEL_ORDERはlevel_weight_shareの実データキー(monthly_index.py参照)と一致させる
+# 必要があるため変更できない。表示名だけをここで日本語として正式な言い方に直す。
+LEVEL_DISPLAY_NAMES = {"衆院選": "衆議院", "参院選": "参議院"}
 
 # 首相の在任期間(発足月)。出典: 首相官邸・各内閣公式発表。更新頻度が低いため
 # 定数として持ち、首相交代のたびに手動で追記する。
@@ -93,46 +96,287 @@ def _build_focus_series(
     return series
 
 
+INLINE_LABEL_MIN_GAP = 6.5  # 政党間でこれだけ離れていればラベルが判別できる
+# とみなす閾値(パーセント換算)。
+
+
+def _find_big_gaps(focus_series: dict[str, tuple[list[int], list[float]]], min_width: int = 6) -> list[tuple[int, int]]:
+    """どの政党もデータを持たない月(国政選挙が12か月窓に入っていない期間、
+    _build_focus_series参照)のうち、min_width以上続く区間を返す。
+    地方重視率パネルではこの区間が線と一切重ならない安全地帯になる。"""
+    covered: set[int] = set()
+    max_x = -1
+    for xs, _ in focus_series.values():
+        if xs:
+            covered.update(xs)
+            max_x = max(max_x, xs[-1])
+    gaps = []
+    i = 0
+    while i <= max_x:
+        if i not in covered:
+            j = i
+            while j <= max_x and j not in covered:
+                j += 1
+            if j - i >= min_width:
+                gaps.append((i, j - 1))
+            i = j
+        else:
+            i += 1
+    return gaps
+
+
+def _place_inline_labels(
+    focus_series: dict[str, tuple[list[int], list[float]]], min_gap: float = INLINE_LABEL_MIN_GAP,
+) -> dict[str, tuple[int, float]]:
+    """各政党について、他のどの政党とも値が十分離れていて線を辿らずに
+    判別できる時点(直近優先)を選び、ラベルをそこに直接置けるようにする。
+
+    複数政党の値がグラフ右端でたまたま一致すること(特に0%)が多く、右端に
+    ラベルを集めて引き出し線で結ぶ方式では、収束点そのもので線が重なって
+    しまい対応関係を追えない。ラベル位置を時点ごと動かせば、値が分かれて
+    いる瞬間の実際の線のすぐ隣に置けるので、この重なりを回避できる
+    (2026-09にユーザー指摘・提案)。
+
+    地方重視率のように大きな欠測区間がある系列では、区間の直前(=以降どの
+    政党の線も存在しない安全地帯のすぐ隣)を最優先で使う(2026-09に
+    ユーザー提案)。
+    """
+    gap_starts = {s for s, _ in _find_big_gaps(focus_series)}
+
+    values_at_x: dict[int, dict[str, float]] = {}
+    for party, (xs, ys) in focus_series.items():
+        for x, y in zip(xs, ys):
+            values_at_x.setdefault(x, {})[party] = y
+
+    placed: list[tuple[int, float]] = []
+
+    def _far_from_placed(x: int, y: float) -> bool:
+        # ラベルの文字列自体が数か月分の横幅を持つため、x方向の除外幅は
+        # 点どうしの間隔ではなく実際のラベル幅を目安にする必要がある。
+        return all(abs(x - px) >= 9 or abs(y - py) >= min_gap for px, py in placed)
+
+    positions: dict[str, tuple[int, float]] = {}
+    for party, (xs, ys) in focus_series.items():
+        gap_adjacent = [i for i in range(len(xs)) if (xs[i] + 1) in gap_starts]
+        if gap_adjacent:
+            i = max(gap_adjacent)
+            positions[party] = (xs[i], ys[i])
+            placed.append((xs[i], ys[i]))
+            continue
+
+        best_idx, best_gap = len(xs) - 1, -1.0
+        chosen = None
+        for i in range(len(xs) - 1, -1, -1):
+            x, y = xs[i], ys[i]
+            others = [v for p2, v in values_at_x[x].items() if p2 != party]
+            gap = min((abs(y - v) for v in others), default=float("inf"))
+            if gap > best_gap:
+                best_idx, best_gap = i, gap
+            if gap >= min_gap and _far_from_placed(x, y):
+                chosen = i
+                break
+        i = chosen if chosen is not None else best_idx
+        positions[party] = (xs[i], ys[i])
+        placed.append((xs[i], ys[i]))
+    return positions
+
+
+def _resolve_label_text_positions(
+    positions: dict[str, tuple[int, float]], min_gap: float = INLINE_LABEL_MIN_GAP, x_window: float = 16.0,
+) -> dict[str, tuple[float, float]]:
+    """新規政党どうしなど、系列全体が短くほぼ同じ値しか取らない場合は
+    _place_inline_labelsでも時点を十分離せないことがある。x・yの両方が
+    近い政党どうしをグループ化し、グループ内でだけ縦に積んで重なりを解消する
+    (印そのものは実際の点のまま、ラベルの文字だけをずらす)。
+
+    1回の統合で動いたラベルが、動かなかった別のラベルと新たに衝突すること
+    があるため、位置が変化しなくなるまで繰り返す。
+    """
+    current: dict[str, tuple[float, float]] = {p: (float(x), float(y)) for p, (x, y) in positions.items()}
+    for _ in range(4):
+        updated = _resolve_label_text_positions_once(current, min_gap, x_window)
+        if updated == current:
+            break
+        current = updated
+    return current
+
+
+def _resolve_label_text_positions_once(
+    positions: dict[str, tuple[float, float]], min_gap: float, x_window: float,
+) -> dict[str, tuple[float, float]]:
+    items = list(positions.items())
+    n = len(items)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            _, (xi, yi) = items[i]
+            _, (xj, yj) = items[j]
+            if abs(xi - xj) < x_window and abs(yi - yj) < min_gap:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    label_positions: dict[str, tuple[float, float]] = {}
+    for idxs in groups.values():
+        members = [items[i] for i in idxs]
+        if len(members) == 1:
+            party, (x, y) = members[0]
+            label_positions[party] = (x, y)
+            continue
+        # 右方向に伸ばしても衝突しないよう、グループの左端を共通の起点にする。
+        anchor_x = min(x for _, (x, _) in members)
+        mean_y = sum(y for _, (_, y) in members) / len(members)
+        ordered = sorted(members, key=lambda m: m[1][1])
+        k = len(ordered)
+        for i, (party, _) in enumerate(ordered):
+            label_positions[party] = (anchor_x, mean_y + (i - (k - 1) / 2) * min_gap)
+    return label_positions
+
+
 def _render_focus_panel(
     ax, focus_series: dict[str, tuple[list[int], list[float]]], ylabel: str,
     n_months: int, provisional_idx: int | None, events: list[tuple[int, str]],
-    party_colors: dict, focus_min_gap: float,
+    party_colors: dict,
 ) -> None:
     """地方重視率・首長重視率パネルの共通描画ロジック(2026-09に追加、
-    generate_main_chart参照)。系列末尾に直接ラベル+リーダー線を置き、
-    ラベルどうしが重ならないよう最低間隔(focus_min_gap)を確保する。"""
-    label_x = n_months - 1 + n_months * 0.05
-    line_ends = []
+    generate_main_chart参照)。ラベルは各政党の線のすぐ隣に直接置く
+    (位置の決め方は_place_inline_labels参照)。"""
     for party, (xs, ys) in focus_series.items():
-        ax.plot(xs, ys, marker="o", markersize=2.5, linewidth=1.1, color=party_colors[party], zorder=3)
-        line_ends.append([xs[-1], ys[-1], party])
+        # 国政選挙が12か月窓に入っていない月は比率が定義できず欠測になる
+        # (_build_focus_series参照)。月インデックスが連続する区間だけを
+        # つないで描画し、欠測をまたいだ直線補間で実在しない推移を
+        # 示さないようにする(2026-09にユーザー指摘)。
+        seg_start = 0
+        for i in range(1, len(xs) + 1):
+            if i == len(xs) or xs[i] - xs[i - 1] != 1:
+                ax.plot(
+                    xs[seg_start:i], ys[seg_start:i], linewidth=2.0, color=party_colors[party], zorder=3,
+                )
+                seg_start = i
 
-    label_positions = sorted((list(e) for e in line_ends), key=lambda e: e[1])
-    for i in range(1, len(label_positions)):
-        if label_positions[i][1] - label_positions[i - 1][1] < focus_min_gap:
-            label_positions[i][1] = label_positions[i - 1][1] + focus_min_gap
-    label_y_by_party = {party: y_label for _, y_label, party in label_positions}
-    for x_end, y_actual, party in line_ends:
-        y_label = label_y_by_party[party]
+    # 分離度の良い時点を選んでも、他の系列と完全には離れないことがある
+    # (新規政党どうしなど、短い期間ほぼ同値でしか存在しない場合)。ラベルの
+    # 文字位置だけ_resolve_label_text_positionsでずらし、印(実際の点)との
+    # 対応は細い引き出し線で明示する(2026-09にユーザー指示)。
+    marker_positions = _place_inline_labels(focus_series)
+    label_text_positions = _resolve_label_text_positions(marker_positions)
+    for party, (x, y) in marker_positions.items():
+        lx, ly = label_text_positions[party]
+        ax.plot(x, y, marker="o", markersize=5, color=party_colors[party], zorder=4)
+        # 右方向に伸ばすと画面外にはみ出す(右端付近の)場合だけ左向きに切り替える。
+        # 閾値を緩めに取りすぎると、右向き・左向きのラベルが中央で正面衝突する
+        # (2026-09に実際に発生・判明)。
+        ha = "right" if lx > n_months - 8 else "left"
+        dx = -n_months * 0.03 if ha == "right" else n_months * 0.03
         ax.plot(
-            [x_end, label_x * 0.99], [y_actual, y_label],
-            color=party_colors[party], alpha=0.5, linewidth=0.7, zorder=2,
+            [x, lx + dx * 0.85], [y, ly], color=party_colors[party], alpha=0.7, linewidth=1.0, zorder=4,
         )
         ax.text(
-            label_x, y_label, party, fontsize=9,
-            color=party_colors[party], va="center", ha="left", zorder=5,
+            lx + dx, ly, party, fontsize=11, color=party_colors[party], va="center", ha=ha,
+            weight="bold", zorder=5,
+            bbox=dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor="none", alpha=0.75),
         )
 
     ax.axhline(50, color="#999999", linewidth=1.0, linestyle="--", zorder=1)
     if provisional_idx is not None and provisional_idx <= n_months - 1:
+        ax.axvspan(provisional_idx - 0.5, n_months - 1, color="#f2c14e", alpha=0.22, zorder=0)
         ax.axvline(provisional_idx - 0.5, color="#b8860b", linewidth=1.0, linestyle=":", zorder=4)
     for idx, _ in events:
         ax.axvline(idx, color="#cccccc", linewidth=0.8, linestyle="--", zorder=0)
-    ax.set_ylim(0, 100)
+    # 0%ちょうどの線が下端に張り付いて見づらいので、下限にわずかな余白を持たせる
+    # (2026-09にユーザー指示)。
+    ax.set_ylim(-5, 100)
     ax.set_yticks([0, 25, 50, 75, 100])
-    ax.set_ylabel(ylabel, fontsize=13)
-    ax.tick_params(axis="both", labelsize=11)
+    ax.set_ylabel(ylabel, fontsize=15)
+    ax.tick_params(axis="both", labelsize=13)
     ax.spines[["top", "right"]].set_visible(False)
+
+
+def _draw_stack_labels(
+    ax2, level_order: list[str], level_display: dict[str, str], level_data: dict[str, list[float]],
+    max_fontsize: float = 14.0, min_fontsize: float = 7.0,
+) -> None:
+    """積み上げ帯グラフの各帯の中に直接ラベルを置く。
+
+    「帯が最も太くなる1時点」だけを見て文字の中心をそこに置く方式では、
+    その時点がたまたまグラフの端(例: 系列の先頭月)だと、中央揃えの文字の
+    半分が軸の外(目盛りラベル領域)にはみ出す(2026-09にユーザー指摘で発覚)。
+    正しくは「文字列全体の横幅ぶんの区間で、帯の太さが文字の高さを保って
+    いる区間」を探す必要がある。文字の実寸はフォント・文字数から手計算せず、
+    実際にAxesへ描画してwindow_extentを測り、それをデータ座標に変換して
+    使う(この関数はfig.tight_layout後、Axesの最終位置が確定してから
+    呼び出すこと)。
+    """
+    import matplotlib.patheffects as pe
+
+    fig = ax2.figure
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    inv = ax2.transData.inverted()
+    n = len(next(iter(level_data.values())))
+
+    def _text_size_data(label: str, fontsize: float) -> tuple[float, float]:
+        t = ax2.text(0, 0, label, fontsize=fontsize, weight="bold")
+        bbox = t.get_window_extent(renderer=renderer)
+        t.remove()
+        x0, y0 = inv.transform((0, 0))
+        x1, y1 = inv.transform((bbox.width, bbox.height))
+        return abs(x1 - x0), abs(y1 - y0)
+
+    def _draw(idx: int, mid_y: float, label: str, fontsize: float) -> None:
+        ax2.text(
+            idx, mid_y, label, fontsize=fontsize, color="white", weight="bold",
+            ha="center", va="center", zorder=5,
+            path_effects=[pe.withStroke(linewidth=2.5, foreground="black", alpha=0.55)],
+        )
+
+    cum_bottom = [0.0] * n
+    for level in level_order:
+        shares = level_data[level]
+        label = level_display.get(level, level)
+        placed = False
+        fontsize = max_fontsize
+        while fontsize >= min_fontsize and not placed:
+            text_w, text_h = _text_size_data(label, fontsize)
+            half_w = text_w / 2
+            half_h = text_h / 2 * 1.1
+            for i in sorted(range(n), key=lambda k: -shares[k]):
+                lo, hi = i - half_w, i + half_w
+                if lo < 0 or hi > n - 1:
+                    continue
+                lo_i, hi_i = int(np.floor(lo)), int(np.ceil(hi)) + 1
+                mid_y = cum_bottom[i] + shares[i] / 2
+                # 帯の厚みだけでなく、区間内の全ての月で固定した縦位置(mid_y)
+                # が実際にその帯の範囲内(上端・下端の間)に収まっているかを
+                # 確認する。帯は厚みを保ったまま上下にずれることがあり、厚み
+                # だけを見ると別の色にまたがって見える(2026-09にユーザー
+                # 指摘: 市区町村長・参議院で発生)。
+                fits = all(
+                    cum_bottom[j] <= mid_y - half_h and mid_y + half_h <= cum_bottom[j] + shares[j]
+                    for j in range(lo_i, hi_i)
+                )
+                if fits:
+                    _draw(i, mid_y, label, fontsize)
+                    placed = True
+                    break
+            fontsize -= 1
+        if not placed:
+            # 最小フォントでも収まる区間が無い(極端に細い帯)場合は、
+            # 最も太い1点にとにかく置く。
+            best_i, best_share = max(enumerate(shares), key=lambda iv: iv[1])
+            _draw(best_i, cum_bottom[best_i] + best_share / 2, label, min_fontsize)
+        cum_bottom = [b + s for b, s in zip(cum_bottom, shares)]
 
 
 def generate_main_chart(
@@ -207,16 +451,15 @@ def generate_main_chart(
         if show_executive_panel else {}
     )
 
-    # ラベルどうしが重ならないよう最低間隔(パーセント値換算)を確保しつつ、
-    # 系列本数が多いほどパネルを縦に伸ばして間隔を確保する(2026-09にユーザー
-    # 指示: ラベルと線が重ならない程度にグラフの高さを広げる)。
-    focus_min_gap = 6.0
-    focus_height = max(2.6, 0.6 * len(focus_series))
-    executive_height = max(2.6, 0.6 * len(executive_series))
+    focus_height = 3.8 if show_focus_panel else 0.0
+    executive_height = 3.8 if show_executive_panel else 0.0
 
     n_panels = 3 + int(show_focus_panel) + int(show_executive_panel)
-    height_ratios = [8]
-    fig_height = 13.4
+    # 1段目(党勢指数)の各政党の縦幅が窮屈だったため、高さ配分を広げる
+    # (2026-09にユーザー指摘)。他パネルの絶対高さ(インチ)は変えないよう、
+    # fig_height側にも同じ増分を足す。
+    height_ratios = [10]
+    fig_height = 15.4
     if show_focus_panel:
         height_ratios.append(focus_height)
         fig_height += focus_height
@@ -225,8 +468,12 @@ def generate_main_chart(
         fig_height += executive_height
     height_ratios += [2.2, 0.9]
 
+    # ラベルは右端の専用列ではなく各系列の線に沿って直接置く方式にしたため
+    # (_place_inline_labels参照)、右余白の確保は不要になった。その分グラフ
+    # 全体を横に広げ、ラベルを置く余地を実際の描画領域の中に作る
+    # (2026-09にユーザー指示)。
     fig, axes = plt.subplots(
-        n_panels, 1, figsize=(11, fig_height), dpi=260, sharex=True,
+        n_panels, 1, figsize=(19, fig_height), dpi=260, sharex=True,
         gridspec_kw={"height_ratios": height_ratios, "hspace": 0.06},
     )
     axes = list(axes)
@@ -243,21 +490,29 @@ def generate_main_chart(
         ys = [h["C_p"].get(party, 0.0) for h in history]
         party_max = max(ys) if max(ys) > 0 else 0.01
         normalized = [baseline + (v / party_max) * band * 0.85 for v in ys]
-        ax1.plot(x, normalized, color=party_colors[party], linewidth=1.6, zorder=3)
+        ax1.plot(x, normalized, color=party_colors[party], linewidth=2.0, zorder=3)
         ax1.fill_between(x, [baseline] * n_months, normalized, color=party_colors[party], alpha=0.15, zorder=2)
         ax1.axhline(baseline, color="#cccccc", linewidth=0.8, zorder=1)
-        ax1.text(-3, baseline, party, fontsize=13, ha="right", va="bottom", color=party_colors[party])
+        # x座標をデータ単位(-3)で指定すると、sharex先の全パネルのxlimに
+        # この余白分の空白が漏れ出る(2026-09にユーザー指摘: 重みシェア
+        # パネルの左側に不要な空白ができていた)。x軸座標系だけAxes分率に
+        # したtransformを使い、データ範囲を広げずにプロット枠のすぐ外側へ
+        # ラベルを置く。
+        ax1.text(
+            -0.01, baseline, party, fontsize=15, ha="right", va="bottom", color=party_colors[party],
+            transform=ax1.get_yaxis_transform(), clip_on=False,
+        )
 
     for idx, _ in events:
         ax1.axvline(idx, color="#999999", linewidth=0.8, linestyle="--", zorder=1)
     for idx, label in events:
-        ax1.text(idx, n_party * band + 0.3, label, fontsize=9.5, rotation=90, ha="left", va="bottom", color="#333333")
+        ax1.text(idx, n_party * band + 0.3, label, fontsize=11, rotation=90, ha="left", va="bottom", color="#333333")
 
     if provisional_idx is not None and provisional_idx <= n_months - 1:
         ax1.axvspan(provisional_idx - 0.5, n_months - 1, color="#f2c14e", alpha=0.22, zorder=0)
-        ax1.axvline(provisional_idx - 0.5, color="#b8860b", linewidth=1.4, zorder=1)
+        ax1.axvline(provisional_idx - 0.5, color="#b8860b", linewidth=1.0, linestyle=":", zorder=4)
         ax1.text(
-            provisional_idx - 0.5, n_party * band + 2.62, " 速報値 ", fontsize=12,
+            provisional_idx - 0.5, n_party * band + 2.62, " 速報値 ", fontsize=14,
             ha="left", va="top", color="#5c4400", weight="bold",
             bbox=dict(boxstyle="round,pad=0.28", facecolor="#fff3cd", edgecolor="#b8860b", linewidth=1.3),
             zorder=6,
@@ -265,13 +520,12 @@ def generate_main_chart(
 
     ax1.set_yticks([])
     ax1.set_ylim(-0.3, n_party * band + 2.7)
-    right_margin = n_months * 0.13 if (show_focus_panel or show_executive_panel) else 0
-    ax1.set_xlim(-18, n_months - 1 + right_margin)
+    ax1.set_xlim(0, n_months - 1 + n_months * 0.03)
     for spine in ["top", "right", "left"]:
         ax1.spines[spine].set_visible(False)
 
     level_data = {t: [h["level_weight_share"].get(t, 0.0) * 100 for h in history] for t in LEVEL_ORDER}
-    ax2.stackplot(x, [level_data[t] for t in LEVEL_ORDER], labels=LEVEL_ORDER, colors=LEVEL_COLORS, alpha=0.85, zorder=2)
+    ax2.stackplot(x, [level_data[t] for t in LEVEL_ORDER], colors=LEVEL_COLORS, alpha=0.85, zorder=2)
     if provisional_idx is not None and provisional_idx <= n_months - 1:
         ax2.axvline(provisional_idx - 0.5, color="#b8860b", linewidth=1.0, linestyle=":", zorder=4)
     for idx, _ in events:
@@ -279,32 +533,23 @@ def generate_main_chart(
 
     ax2.set_ylim(0, 100)
     ax2.set_yticks([0, 25, 50, 75, 100])
-    ax2.set_ylabel("重みシェア (%)", fontsize=13)
-    ax2.tick_params(axis="both", labelsize=11)
+    ax2.set_ylabel("重みシェア (%)", fontsize=15)
+    ax2.tick_params(axis="both", labelsize=13)
     ax2.spines[["top", "right"]].set_visible(False)
-    handles, labels = ax2.get_legend_handles_labels()
-    # stackplotは積み上げの下から上へ順にhandlesを返すため、凡例が積み上げ図の
-    # 見た目(上から下)と逆順になる。凡例を逆順にして見た目の並びに合わせる。
-    ax2.legend(
-        handles[::-1], labels[::-1],
-        loc="upper left", bbox_to_anchor=(1.0, 1.05), fontsize=11, frameon=False,
-    )
 
     if show_focus_panel:
         _render_focus_panel(
-            ax4, focus_series, "地方重視率 (%)", n_months, provisional_idx, events,
-            party_colors, focus_min_gap,
+            ax4, focus_series, "地方重視率 (%)", n_months, provisional_idx, events, party_colors,
         )
     if show_executive_panel:
         _render_focus_panel(
-            ax5, executive_series, "首長重視率 (%)", n_months, provisional_idx, events,
-            party_colors, focus_min_gap,
+            ax5, executive_series, "首長重視率 (%)", n_months, provisional_idx, events, party_colors,
         )
 
     for (start, end, name), color in zip(pm_periods, PM_COLORS):
-        lo, hi = max(start, -18), min(end, n_months - 1)
+        lo, hi = max(start, 0), min(end, n_months - 1)
         ax3.axvspan(lo, hi, color=color, alpha=0.55, zorder=1)
-        ax3.text((lo + hi) / 2, 0.5, name, ha="center", va="center", fontsize=12, color="white", weight="bold", zorder=3)
+        ax3.text((lo + hi) / 2, 0.5, name, ha="center", va="center", fontsize=14, color="white", weight="bold", zorder=3)
     if reshuffle:
         for idx in reshuffle_idxs:
             ax3.axvline(idx, color="white", linewidth=1.4, linestyle=(0, (2, 1)), zorder=2)
@@ -322,9 +567,20 @@ def generate_main_chart(
         tick_idx.append(n_months - 1)
     xlabels = [f"{history[i]['year']}/{history[i]['month']:02d}" for i in tick_idx]
     ax3.set_xticks(tick_idx)
-    ax3.set_xticklabels(xlabels, fontsize=11, rotation=30, ha="right")
+    ax3.set_xticklabels(xlabels, fontsize=13, rotation=30, ha="right")
 
-    fig.tight_layout(rect=[0.08, 0.02, 0.88, 1])
+    # 左右の余白は政党名ラベル・凡例の実際の幅(インチ換算)で決まり、図の横幅を
+    # 広げても比例して増やす必要はない。図を横に広げた分、比率としては
+    # 余白を狭めて凡例が浮いて見えないようにする(2026-09にユーザー指摘)。
+    # 凡例を含め、全ラベルがAxes内部(実データ+右側の小さな余白)に収まる
+    # ようになったため、外側の余白はもう不要(2026-09にユーザー指摘の解消)。
+    fig.tight_layout(rect=[0.055, 0.02, 0.99, 1])
+
+    # 文字列全体の横幅が帯の範囲内に収まる区間を、tight_layoutで各Axesの
+    # 最終位置が確定した後の実測サイズで探す必要があるため、ここで呼ぶ
+    # (_draw_stack_labels参照)。
+    _draw_stack_labels(ax2, LEVEL_ORDER, LEVEL_DISPLAY_NAMES, level_data)
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, facecolor="white", bbox_inches="tight")
     plt.close(fig)
@@ -431,13 +687,20 @@ def generate_executive_focus_chart(
     local_assembly_history: list[dict],
     out_path: Path = EXECUTIVE_FOCUS_OUT_PATH,
 ) -> Path:
-    """政党ごとに「首長重視率」=首長C_p/(首長C_p+地方議会C_p)の全期間平均を
-    棒グラフで示す独立の図(monthly_index.build_month_snapshotsの
-    executive_only=True・only_level={都道府県議会,市区町村議会}の2系列を
-    組み合わせる、2026-09にユーザー提案)。首長選は件数が少なく月によって
-    0%/100%に振れやすいため、月次の時系列ではなく全期間平均を主役にした
-    ——月次の時系列は図1の方に補助パネルとして載せる(2026-09にユーザー指示、
-    generate_main_chartのexecutive_history引数を参照)。
+    """政党ごとに「首長重視率」=首長C_p/(首長C_p+地方議会C_p)の平均を棒グラフで
+    示す独立の図(monthly_index.build_month_snapshotsのexecutive_only=True・
+    only_level={都道府県議会,市区町村議会}の2系列を組み合わせる、2026-09に
+    ユーザー提案)。首長選は件数が少なく月によって0%/100%に振れやすいため、
+    月次の時系列ではなく平均を主役にした——月次の時系列は図1の方に補助パネル
+    として載せる(2026-09にユーザー指示、generate_main_chartのexecutive_history
+    引数を参照)。
+
+    平均は速報値期間(_provisional_start()以降、首長の推薦・支持データが
+    未収録の期間)を除いた確定値期間だけで取る。速報値期間を含めて平均すると、
+    無所属首長への推薦・支持の振り替えが未反映のまま平均に混ざり、政党によって
+    は分類が完全に逆転することが判明したため(2026-09にユーザー指摘・検証、
+    日本維新の会が確定値期間36.5%〈議会型〉・速報値期間91.7%〈首長型〉、
+    国民民主党が確定値75.3%〈首長型〉・速報値38.9%〈議会型〉)。
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -453,6 +716,9 @@ def generate_executive_focus_chart(
     exe_by_ym = {(h["year"], h["month"]): h["C_p"] for h in executive_history}
     asm_by_ym = {(h["year"], h["month"]): h["C_p"] for h in local_assembly_history}
     shared_months = sorted(set(exe_by_ym) & set(asm_by_ym))
+    provisional_start = _provisional_start()
+    if provisional_start is not None:
+        shared_months = [ym for ym in shared_months if ym < provisional_start]
 
     party_order = [p for p in PARTY_ORDER]
     for h in executive_history + local_assembly_history:
@@ -484,7 +750,7 @@ def generate_executive_focus_chart(
     ax.set_yticks(ys_pos)
     ax.set_yticklabels([p for p, _ in avg_rows], fontsize=11)
     ax.set_xlim(0, 100)
-    ax.set_xlabel(f"首長重視率({len(shared_months)}か月平均, %)", fontsize=12)
+    ax.set_xlabel(f"首長重視率(確定値期間{len(shared_months)}か月平均, %)", fontsize=12)
     for y, (_, v) in zip(ys_pos, avg_rows):
         ax.text(v + 1.5, y, f"{v:.0f}%", va="center", fontsize=10)
     ax.spines[["top", "right"]].set_visible(False)

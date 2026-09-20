@@ -108,6 +108,44 @@ def forecast_next_month(
     return result
 
 
+# 国政に強い/地方に強いという分類(design_document.tex \S7.3・note記事
+# 「地方重視率」参照)。確定値期間・速報値期間のどちらで見ても全党一致する
+# 安定した軸であることを確認済みなので定数として持つ(2026-09にユーザー提案の
+# 「機械的な方向の目安」)。首長重視率(議会型・首長型)の軸は速報値期間を
+# 混ぜると逆転する政党があり不安定なため、ここでは使わない。
+NATIONAL_FOCUSED_PARTIES = {"自由民主党", "立憲民主党", "日本維新の会", "国民民主党"}
+LOCAL_FOCUSED_PARTIES = {"公明党", "日本共産党"}
+
+
+def direction_hint(
+    year: int, month: int, election_months: list[tuple[int, int]] | None = None,
+) -> dict[str, int] | None:
+    """(year, month)が国政選挙が絡む月でなければNone。絡む月なら
+    {政党: +1 or -1}で「上がる/下がる」の機械的な目安を返す。
+
+    国政に強い政党は選挙が窓に参入する月(+1)で上がり退出する月(-1)で下がる、
+    地方に強い政党はその逆、という符号ルールで、実際に66件(バックテスト
+    対象6党×11イベント月)中53件(80%)が的中した(design_document.tex
+    \\S7.3、二項検定で$p=3.6\\times10^{-7}$)。TimesFM-3の個別予測はこの
+    機械的な効果を上回る「真の勢い」を検出できなかったため、2026-09に
+    こちらへ切り替えた(forecast_next_month参照、コード自体は残してある)。
+    """
+    if election_months is None:
+        election_months = national_elections.load_election_months()
+    next_year, next_month = _next_month(year, month)
+    covariate = _covariate_value_for_month(next_year, next_month, election_months)
+    if covariate == 0:
+        return None
+    sign = 1 if covariate > 0 else -1
+    hints: dict[str, int] = {}
+    for party in ADOPTED_PARTIES:
+        if party in NATIONAL_FOCUSED_PARTIES:
+            hints[party] = sign
+        elif party in LOCAL_FOCUSED_PARTIES:
+            hints[party] = -sign
+    return hints
+
+
 def load_forecast_history() -> dict[str, dict[str, float]]:
     if FORECAST_HISTORY_PATH.exists():
         return json.loads(FORECAST_HISTORY_PATH.read_text(encoding="utf-8"))

@@ -53,17 +53,13 @@ def _update_monthly_pipeline() -> dict:
         executive_history=executive_history, local_assembly_history=local_assembly_history,
     )
 
-    # timesfmは重い任意依存であり、本番のrequirements.txtには含まれるが未導入の
-    # 実行環境でパイプライン全体を止めたくないため、無ければ予測をスキップする
-    # (forecast.py参照、「ゼロ予測ではなく予測なし」の方針と同じ考え方)。
-    forecast_result = None
-    try:
-        forecast_result = forecast_mod.forecast_next_month(history, election_months)
-    except ImportError as exc:
-        print(f"予測をスキップ(timesfm未導入): {exc}")
-
+    # TimesFM-3個別予測はバックテスト再検証の結果、機械的な符号ルール(下記)を
+    # 上回る予測力を確認できなかったため、いったん見送っている
+    # (design_document.tex \S7.3・note記事「予測とサプライズについて」参照。
+    # forecast_next_month自体のコードは残してあり、データが積み上がれば再検討する)。
+    last = sorted(history, key=lambda h: (h["year"], h["month"]))[-1]
+    forecast_result = forecast_mod.direction_hint(last["year"], last["month"], election_months)
     if forecast_result is not None:
-        last = sorted(history, key=lambda h: (h["year"], h["month"]))[-1]
         next_ym = forecast_mod._next_month(last["year"], last["month"])
         forecast_mod.record_forecast(*next_ym, forecast_result)
 
@@ -155,11 +151,11 @@ def main() -> None:
     mi = result["monthly_index"]
     print(f"\n党勢指数 C_p(T)の月次履歴: {mi['n_history_months']}か月分を保存")
     if mi["forecast_next_month"] is not None:
-        print("翌月のTimesFM-3予測:")
+        print("翌月の方向の目安(国政/地方の型からの機械的ルール):")
         for party, v in sorted(mi["forecast_next_month"].items(), key=lambda kv: -kv[1]):
-            print(f"  {party}: {v:+.4f}")
+            print(f"  {party}: {'上昇' if v > 0 else '下降'}")
     else:
-        print("翌月は予測対象月ではない、またはtimesfm未導入のため予測なし")
+        print("翌月は国政選挙が絡む月ではないため方向の目安なし")
 
     history = cp_history.load_history()
     facts = draft_mod.build_month_facts(history)

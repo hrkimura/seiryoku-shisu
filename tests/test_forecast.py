@@ -61,6 +61,36 @@ def test_forecast_next_month_returns_none_for_empty_history():
     assert forecast.forecast_next_month([]) is None
 
 
+def test_direction_hint_returns_none_when_next_month_not_election_linked():
+    assert forecast.direction_hint(2022, 1, election_months=[]) is None
+
+
+def test_direction_hint_national_focused_rises_when_election_enters_window():
+    elections = [(2022, 7)]
+    hints = forecast.direction_hint(2022, 6, elections)  # 翌月7月が選挙月(+1)
+    assert hints["自由民主党"] == 1  # 国政型は選挙が窓に入ると上がる
+    assert hints["公明党"] == -1  # 地方型はその逆
+
+
+def test_direction_hint_national_focused_falls_when_election_exits_window():
+    elections = [(2022, 7)]
+    hints = forecast.direction_hint(2023, 6, elections)  # 翌月7月が窓抜け月(-1)
+    assert hints["自由民主党"] == -1
+    assert hints["日本共産党"] == 1
+
+
+def test_direction_hint_covers_only_adopted_parties():
+    hints = forecast.direction_hint(2022, 6, [(2022, 7)])
+    assert set(hints.keys()) == set(forecast.ADOPTED_PARTIES)
+
+
+def test_direction_hint_handles_december_rollover():
+    elections = [(2023, 1)]
+    hints = forecast.direction_hint(2022, 12, elections)  # 翌月2023-01が選挙月
+    assert hints is not None
+    assert hints["自由民主党"] == 1
+
+
 @pytest.mark.skipif(not _TIMESFM_AVAILABLE, reason="timesfmがインストールされていない環境ではスキップ")
 def test_forecast_next_month_calls_timesfm_when_election_linked_and_context_is_enough():
     # 最終月を2022-12にし、その翌月(2023-01、選挙月そのもの)がshould_forecastの
