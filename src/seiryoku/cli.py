@@ -35,10 +35,23 @@ def _update_monthly_pipeline() -> dict:
 
     from . import charts
 
-    charts.generate_main_chart(history)
-
     local_history = [_snapshot_to_dict(s) for s in build_month_snapshots(local_only=True)]
     precursor_rows = precursor.update_precursor_table(local_history)
+
+    national_history = [_snapshot_to_dict(s) for s in build_month_snapshots(national_only=True)]
+    charts.generate_national_local_scatter(national_history, local_history)
+
+    executive_history = [_snapshot_to_dict(s) for s in build_month_snapshots(executive_only=True)]
+    local_assembly_history = [
+        _snapshot_to_dict(s)
+        for s in build_month_snapshots(only_level=frozenset({"都道府県議会", "市区町村議会"}))
+    ]
+    charts.generate_executive_focus_chart(executive_history, local_assembly_history)
+
+    charts.generate_main_chart(
+        history, national_history=national_history, local_history=local_history,
+        executive_history=executive_history, local_assembly_history=local_assembly_history,
+    )
 
     # timesfmは重い任意依存であり、本番のrequirements.txtには含まれるが未導入の
     # 実行環境でパイプライン全体を止めたくないため、無ければ予測をスキップする
@@ -136,20 +149,6 @@ def main() -> None:
     print("\n政党インパクト指数 C_p:")
     for party, v in sorted(result["C_p"].items(), key=lambda kv: -kv[1]):
         print(f"  {party}: {v:.4f}")
-
-    tw = result["W_p_turnover"]
-    print(f"\n党派転換指数 W_p^turnover({tw['year']}-{tw['month']:02d}時点、直近12か月累積、{tw['n_events']}件):")
-    for party, v in sorted(tw["W_p"].items(), key=lambda kv: -kv[1]):
-        print(f"  {party}: {v:.4f}")
-
-    print("\n党派転換の補集指標 L_p^turnover(被奪取側):")
-    for party, v in sorted(tw["L_p"].items(), key=lambda kv: -kv[1]):
-        print(f"  {party}: {v:.4f}")
-
-    print("\n党派転換の正味スコア(sum sqrt(P)で正規化、前月比較可能):")
-    for party, v in sorted(tw["net_share"].items(), key=lambda kv: -kv[1]):
-        prev_v = tw["prev_net_share"].get(party, 0.0)
-        print(f"  {party}: {v:+.4f} (前月 {prev_v:+.4f})")
 
     print("\n知事の議席台帳カバー率:", result["governor_registry_coverage"])
 

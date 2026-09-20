@@ -25,6 +25,130 @@ def test_generate_main_chart_writes_a_png(tmp_path, monkeypatch):
     assert out_path.stat().st_size > 0
 
 
+def test_generate_main_chart_adds_national_focus_panel_when_given_the_extra_series(tmp_path, monkeypatch):
+    monkeypatch.setattr(diet_history, "fetch_sangiin_election_history",
+                         lambda: [Snapshot(session="a", date="2022-07-10", seats={})])
+    monkeypatch.setattr(diet_history, "fetch_shugiin_history", lambda: [])
+    monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {"2025": {}})
+
+    history = _fixture_history()
+    national_history = [
+        {"year": h["year"], "month": h["month"], "C_p": {"自由民主党": 0.7, "公明党": 0.3}}
+        for h in history
+    ]
+    local_history = [
+        {"year": h["year"], "month": h["month"], "C_p": {"自由民主党": 0.4, "公明党": 0.6}}
+        for h in history
+    ]
+
+    out_path = tmp_path / "chart.png"
+    result = charts.generate_main_chart(
+        history, out_path=out_path, national_history=national_history, local_history=local_history,
+    )
+
+    assert result == out_path
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_generate_main_chart_adds_executive_focus_panel_when_given_the_extra_series(tmp_path, monkeypatch):
+    monkeypatch.setattr(diet_history, "fetch_sangiin_election_history",
+                         lambda: [Snapshot(session="a", date="2022-07-10", seats={})])
+    monkeypatch.setattr(diet_history, "fetch_shugiin_history", lambda: [])
+    monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {"2025": {}})
+
+    history = _fixture_history()
+    executive_history = [
+        {"year": h["year"], "month": h["month"], "C_p": {"自由民主党": 0.7, "公明党": 0.3}}
+        for h in history
+    ]
+    local_assembly_history = [
+        {"year": h["year"], "month": h["month"], "C_p": {"自由民主党": 0.4, "公明党": 0.6}}
+        for h in history
+    ]
+
+    out_path = tmp_path / "chart.png"
+    result = charts.generate_main_chart(
+        history, out_path=out_path,
+        executive_history=executive_history, local_assembly_history=local_assembly_history,
+    )
+
+    assert result == out_path
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_generate_main_chart_adds_both_focus_panels_together(tmp_path, monkeypatch):
+    monkeypatch.setattr(diet_history, "fetch_sangiin_election_history",
+                         lambda: [Snapshot(session="a", date="2022-07-10", seats={})])
+    monkeypatch.setattr(diet_history, "fetch_shugiin_history", lambda: [])
+    monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {"2025": {}})
+
+    history = _fixture_history()
+
+    def _series(a, b):
+        return [{"year": h["year"], "month": h["month"], "C_p": {"自由民主党": a, "公明党": b}} for h in history]
+
+    out_path = tmp_path / "chart.png"
+    result = charts.generate_main_chart(
+        history, out_path=out_path,
+        national_history=_series(0.7, 0.3), local_history=_series(0.4, 0.6),
+        executive_history=_series(0.6, 0.4), local_assembly_history=_series(0.3, 0.7),
+    )
+
+    assert result == out_path
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_generate_executive_focus_chart_writes_a_png(tmp_path):
+    executive_history = [
+        {"year": 2022 + i, "month": 1, "C_p": {"自由民主党": 0.2, "公明党": 0.5 + 0.01 * i}}
+        for i in range(4)
+    ]
+    local_assembly_history = [
+        {"year": 2022 + i, "month": 1, "C_p": {"自由民主党": 0.5, "公明党": 0.1}}
+        for i in range(4)
+    ]
+
+    out_path = tmp_path / "executive_focus.png"
+    result = charts.generate_executive_focus_chart(
+        executive_history, local_assembly_history, out_path=out_path,
+    )
+
+    assert result == out_path
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_generate_national_local_scatter_writes_a_png(tmp_path):
+    national_history = [
+        {"year": 2022 + i, "month": 1, "C_p": {"自由民主党": 0.5 + 0.01 * i, "公明党": 0.1}}
+        for i in range(4)
+    ]
+    local_history = [
+        {"year": 2022 + i, "month": 1, "C_p": {"自由民主党": 0.2, "公明党": 0.15 + 0.01 * i}}
+        for i in range(4)
+    ]
+
+    out_path = tmp_path / "scatter.png"
+    result = charts.generate_national_local_scatter(national_history, local_history, out_path=out_path)
+
+    assert result == out_path
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_generate_national_local_scatter_skips_parties_with_too_few_shared_months(tmp_path):
+    national_history = [{"year": 2022, "month": 1, "C_p": {"自由民主党": 0.5, "新党": 0.1}}]
+    local_history = [{"year": 2022, "month": 1, "C_p": {"自由民主党": 0.2, "新党": 0.2}}]
+
+    out_path = tmp_path / "scatter.png"
+    charts.generate_national_local_scatter(national_history, local_history, out_path=out_path)
+
+    assert out_path.exists()
+
+
 def test_provisional_start_derives_may_of_latest_jichisoken_version(monkeypatch):
     monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {"2023": {}, "2025": {}})
     assert charts._provisional_start() == (2025, 5)

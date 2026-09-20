@@ -188,8 +188,19 @@ class MonthSnapshot:
     level_weight_share: dict[str, float]
 
 
+ALL_LEVEL_TYPES = frozenset(
+    {"衆院選", "参院選", "都道府県知事", "都道府県議会", "市区町村長", "市区町村議会"}
+)
+NATIONAL_LEVEL_TYPES = frozenset({"衆院選", "参院選"})
+LOCAL_LEVEL_TYPES = ALL_LEVEL_TYPES - NATIONAL_LEVEL_TYPES
+ASSEMBLY_LEVEL_TYPES = frozenset({"衆院選", "参院選", "都道府県議会", "市区町村議会"})
+EXECUTIVE_LEVEL_TYPES = frozenset({"都道府県知事", "市区町村長"})
+
+
 def build_month_snapshots(
-    min_year: int = MIN_YEAR, window_months: int = 12, local_only: bool = False
+    min_year: int = MIN_YEAR, window_months: int = 12, local_only: bool = False,
+    national_only: bool = False, only_level: str | frozenset[str] | None = None,
+    assembly_only: bool = False, executive_only: bool = False,
 ) -> list[MonthSnapshot]:
     """min_year以降、月ごとにその月を含めてwindow_monthsか月分遡って実際にあった
     選挙を集計してC_p(t)を再構成する(モジュールdocstring参照)。既定の12か月は、
@@ -204,16 +215,49 @@ def build_month_snapshots(
     追加(precursor.py参照)。以前はdiet_history.fetch_sangiin_election_history等を
     空リストに差し替えるモンキーパッチで代用していたが、そのやり方は呼び出し側の
     コードを書き換える必要がありテストしにくいため、正式なパラメータに昇格した。
+
+    national_only・assembly_only・executive_onlyはlocal_onlyの対称形で、それぞれ
+    「国政選挙限定」(衆院選・参院選のみ)、「議会選挙限定」(衆参・都道府県議会・
+    市区町村議会)、「首長選挙限定」(都道府県知事・市区町村長)の系列を作る。
+    政党ごとに「どの階層に強いか」を時系列で見るために2026-09に追加。
+
+    only_levelを指定すると、6階層のうち指定した1つ、または複数(frozenset)に
+    絞った系列を作る。local_only等の4つのフラグは、いずれもonly_levelの特定の
+    組み合わせを指定する糖衣構文にすぎない。上記5つのフラグ・引数のうち2つ以上を
+    同時に指定することはできない。
     """
+    exclusive = [local_only, national_only, assembly_only, executive_only, only_level is not None]
+    if sum(bool(x) for x in exclusive) > 1:
+        raise ValueError(
+            "local_only・national_only・assembly_only・executive_only・only_level は"
+            "いずれか1つしか指定できない"
+        )
+    if local_only:
+        only_levels: frozenset[str] | None = LOCAL_LEVEL_TYPES
+    elif national_only:
+        only_levels = NATIONAL_LEVEL_TYPES
+    elif assembly_only:
+        only_levels = ASSEMBLY_LEVEL_TYPES
+    elif executive_only:
+        only_levels = EXECUTIVE_LEVEL_TYPES
+    elif only_level is not None:
+        only_levels = frozenset({only_level}) if isinstance(only_level, str) else frozenset(only_level)
+    else:
+        only_levels = None
+
     from . import municipal_registry, turnover
     from .fetch import jichisoken
 
-    if local_only:
-        sangiin_entries: list[tuple[tuple[int, int] | None, dict[str, int]]] = []
-        shugiin_entries: list[tuple[tuple[int, int] | None, dict[str, int]]] = []
-    else:
-        sangiin_entries = [(_ym(s.date), s.seats) for s in diet_history.fetch_sangiin_election_history()]
-        shugiin_entries = [(_ym(s.date), s.seats) for s in diet_history.fetch_shugiin_history()]
+    include_sangiin = only_levels is None or "参院選" in only_levels
+    include_shugiin = only_levels is None or "衆院選" in only_levels
+    sangiin_entries: list[tuple[tuple[int, int] | None, dict[str, int]]] = (
+        [(_ym(s.date), s.seats) for s in diet_history.fetch_sangiin_election_history()]
+        if include_sangiin else []
+    )
+    shugiin_entries: list[tuple[tuple[int, int] | None, dict[str, int]]] = (
+        [(_ym(s.date), s.seats) for s in diet_history.fetch_shugiin_history()]
+        if include_shugiin else []
+    )
     national_pop = population.national_population()
     national_parties = _current_national_parties()
 
@@ -238,7 +282,7 @@ def build_month_snapshots(
             name = municipal_registry.jurisdiction_name(jid)
             size, by_year = (muni_pop.get(name), muni_by_year) if name else (None, None)
             level_type = "市区町村長"
-        if name and size is not None:
+        if name and size is not None and (only_levels is None or level_type in only_levels):
             local_entries.append((name, parsed, size, by_year, level_type))
 
     # 都道府県議会・市区町村議会(gikai)は、首長と違い候補者個人の推薦・支持政党を
@@ -257,11 +301,15 @@ def build_month_snapshots(
             name = municipal_registry.jurisdiction_name(jid)
             size = muni_pop.get(name) if name else None
             level_type = "市区町村議会"
-        if size is not None:
+        if size is not None and (only_levels is None or level_type in only_levels):
             gikai_local_entries.append((parsed, size, level_type))
 
+    # 実行日を含む月はまだ終わっておらず、その月の選挙が全て出揃っているとは
+    # 限らないため、直近の完全に終わった暦月までを対象にする(2026-09に
+    # ユーザー指摘: 9月19日に実行しても9月分は未完了)。
     today = date.today()
-    months = _month_range((min_year, 1), (today.year, today.month))
+    last_complete = (today.year, today.month - 1) if today.month > 1 else (today.year - 1, 12)
+    months = _month_range((min_year, 1), last_complete)
 
     # 月ごとの生イベント(level_type, P_e, n_e, shares)をまず作っておき、
     # window_months分だけ遡って合算する(スライディングウィンドウ、

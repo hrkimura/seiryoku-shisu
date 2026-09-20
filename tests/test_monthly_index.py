@@ -358,3 +358,148 @@ def test_build_month_snapshots_local_only_excludes_diet_elections(monkeypatch):
 
     assert (2022, 4) in by_month
     assert by_month[(2022, 4)].C_p == {"自由民主党": 1.0}
+
+
+def test_build_month_snapshots_national_only_excludes_local_elections(monkeypatch):
+    """national_only=Trueはlocal_onlyの対称形で、知事・市区町村長・都道府県議会・
+    市区町村議会を一切含めない「国政選挙限定」の系列を作る(政党ごとに国政/地方の
+    強さを比較するために2026-09に追加)。同じ月に衆院選(自民)と市長選(公明)を
+    重ねておき、国政選挙のシェアだけが残ることを確認する。"""
+    from seiryoku.fetch import diet
+
+    monkeypatch.setattr(
+        diet_history,
+        "fetch_shugiin_history",
+        lambda: [Snapshot(session="49", date="2022-04-10", seats={"自由民主党": 1})],
+    )
+    monkeypatch.setattr(diet_history, "fetch_sangiin_election_history", lambda: [])
+    monkeypatch.setattr(diet, "fetch_diet_seats", lambda: {"衆議院": {"自由民主党": 5}})
+    monkeypatch.setattr(monthly_index, "_latest_shugiin_district_pct", lambda: {})
+    monkeypatch.setattr(monthly_index, "_latest_sangiin_district_pct", lambda: {})
+    monkeypatch.setattr(population, "national_population", lambda: 10000)
+    monkeypatch.setattr(turnover, "_ensure_governor_ids_loaded", lambda: None)
+    monkeypatch.setattr(turnover, "_GOVERNOR_JICHITAI_IDS", {})
+    monkeypatch.setattr(
+        turnover,
+        "load_term_chain_cache",
+        lambda: {"chains": {"1": [{"vote_date": "2022-04-10", "party": "公明党"}]}},
+    )
+    monkeypatch.setattr(municipal_registry, "jurisdiction_name", lambda jid: "A市")
+    monkeypatch.setattr(municipal_registry, "load_gikai_term_chain_cache", lambda: {"chains": {}})
+    monkeypatch.setattr(population, "prefecture_population_by_name", lambda: {})
+    monkeypatch.setattr(population, "municipal_population_by_name", lambda: {"A市": 10000})
+    monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {})
+    monkeypatch.setattr(jichisoken, "municipal_head_endorsements_by_year", lambda: {})
+    monkeypatch.setattr(
+        jichisoken, "endorsement_for_vote_year", lambda by_year, name, vote_date: None
+    )
+
+    snapshots = monthly_index.build_month_snapshots(min_year=2022, window_months=1, national_only=True)
+    by_month = {(s.year, s.month): s for s in snapshots}
+
+    assert (2022, 4) in by_month
+    assert by_month[(2022, 4)].C_p == {"自由民主党": 1.0}
+    assert by_month[(2022, 4)].n_events == 1
+
+
+def test_build_month_snapshots_rejects_both_local_only_and_national_only():
+    with pytest.raises(ValueError):
+        monthly_index.build_month_snapshots(local_only=True, national_only=True)
+
+
+def test_build_month_snapshots_rejects_only_level_with_local_or_national_only():
+    with pytest.raises(ValueError):
+        monthly_index.build_month_snapshots(only_level="衆院選", local_only=True)
+    with pytest.raises(ValueError):
+        monthly_index.build_month_snapshots(only_level="衆院選", national_only=True)
+    with pytest.raises(ValueError):
+        monthly_index.build_month_snapshots(assembly_only=True, executive_only=True)
+    with pytest.raises(ValueError):
+        monthly_index.build_month_snapshots(assembly_only=True, local_only=True)
+
+
+def test_build_month_snapshots_executive_only_excludes_assemblies(monkeypatch):
+    """executive_only=Trueは知事・市区町村長だけに絞る(assembly_onlyの対称形)。
+    同じ月に知事選(自民)と市議会選(公明)を重ねておき、市議会側が混ざらないことを
+    確認する。"""
+    from seiryoku.fetch import diet
+
+    monkeypatch.setattr(diet_history, "fetch_sangiin_election_history", lambda: [])
+    monkeypatch.setattr(diet_history, "fetch_shugiin_history", lambda: [])
+    monkeypatch.setattr(diet, "fetch_diet_seats", lambda: {"衆議院": {"自由民主党": 5}})
+    monkeypatch.setattr(monthly_index, "_latest_shugiin_district_pct", lambda: {})
+    monkeypatch.setattr(monthly_index, "_latest_sangiin_district_pct", lambda: {})
+    monkeypatch.setattr(population, "national_population", lambda: 10000)
+    monkeypatch.setattr(turnover, "_ensure_governor_ids_loaded", lambda: None)
+    monkeypatch.setattr(turnover, "_GOVERNOR_JICHITAI_IDS", {"石川県": 100})
+    monkeypatch.setattr(
+        turnover,
+        "load_term_chain_cache",
+        lambda: {"chains": {"100": [{"vote_date": "2022-04-10", "party": "自由民主党"}]}},
+    )
+    monkeypatch.setattr(municipal_registry, "jurisdiction_name", lambda jid: "A市")
+    monkeypatch.setattr(
+        municipal_registry,
+        "load_gikai_term_chain_cache",
+        lambda: {"chains": {"1": [{"vote_date": "2022-04-10", "seats": {"公明党": 10}}]}},
+    )
+    monkeypatch.setattr(population, "prefecture_population_by_name", lambda: {"石川県": 10000})
+    monkeypatch.setattr(population, "municipal_population_by_name", lambda: {"A市": 10000})
+    monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {})
+    monkeypatch.setattr(jichisoken, "municipal_head_endorsements_by_year", lambda: {})
+    monkeypatch.setattr(
+        jichisoken, "endorsement_for_vote_year", lambda by_year, name, vote_date: None
+    )
+
+    snapshots = monthly_index.build_month_snapshots(
+        min_year=2022, window_months=1, executive_only=True,
+    )
+    by_month = {(s.year, s.month): s for s in snapshots}
+
+    assert (2022, 4) in by_month
+    assert by_month[(2022, 4)].C_p == {"自由民主党": 1.0}
+    assert by_month[(2022, 4)].n_events == 1
+
+
+def test_build_month_snapshots_only_level_isolates_a_single_level(monkeypatch):
+    """only_level=X指定時は6階層のうちXだけに絞る(政党ごとにどの階層に強いかを
+    見るために2026-09に追加)。都道府県知事(自民)と市区町村議会(公明)を同じ月に
+    重ねておき、only_level="都道府県知事"なら市区町村議会側が混ざらないことを
+    確認する。"""
+    from seiryoku.fetch import diet
+
+    monkeypatch.setattr(diet_history, "fetch_sangiin_election_history", lambda: [])
+    monkeypatch.setattr(diet_history, "fetch_shugiin_history", lambda: [])
+    monkeypatch.setattr(diet, "fetch_diet_seats", lambda: {"衆議院": {"自由民主党": 5}})
+    monkeypatch.setattr(monthly_index, "_latest_shugiin_district_pct", lambda: {})
+    monkeypatch.setattr(monthly_index, "_latest_sangiin_district_pct", lambda: {})
+    monkeypatch.setattr(population, "national_population", lambda: 10000)
+    monkeypatch.setattr(turnover, "_ensure_governor_ids_loaded", lambda: None)
+    monkeypatch.setattr(turnover, "_GOVERNOR_JICHITAI_IDS", {"石川県": 100})
+    monkeypatch.setattr(
+        turnover,
+        "load_term_chain_cache",
+        lambda: {"chains": {"100": [{"vote_date": "2022-04-10", "party": "自由民主党"}]}},
+    )
+    monkeypatch.setattr(municipal_registry, "jurisdiction_name", lambda jid: "A市")
+    monkeypatch.setattr(
+        municipal_registry,
+        "load_gikai_term_chain_cache",
+        lambda: {"chains": {"1": [{"vote_date": "2022-04-10", "seats": {"公明党": 10}}]}},
+    )
+    monkeypatch.setattr(population, "prefecture_population_by_name", lambda: {"石川県": 10000})
+    monkeypatch.setattr(population, "municipal_population_by_name", lambda: {"A市": 10000})
+    monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {})
+    monkeypatch.setattr(jichisoken, "municipal_head_endorsements_by_year", lambda: {})
+    monkeypatch.setattr(
+        jichisoken, "endorsement_for_vote_year", lambda by_year, name, vote_date: None
+    )
+
+    snapshots = monthly_index.build_month_snapshots(
+        min_year=2022, window_months=1, only_level="都道府県知事",
+    )
+    by_month = {(s.year, s.month): s for s in snapshots}
+
+    assert (2022, 4) in by_month
+    assert by_month[(2022, 4)].C_p == {"自由民主党": 1.0}
+    assert by_month[(2022, 4)].n_events == 1
