@@ -8,6 +8,7 @@ data/cp_history.json・data/national_election_months.jsonから再生成でき�
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -68,6 +69,33 @@ def _provisional_start() -> tuple[int, int] | None:
     if not years:
         return None
     return (max(years), 5)
+
+
+PROVISIONAL_START_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "provisional_start_state.json"
+
+
+def check_provisional_start_update() -> tuple[tuple[int, int] | None, bool]:
+    """_provisional_start()の値を前回実行時の記録と比較する。
+
+    jichisokenが新しい年版を公開するのは例年5月前後だけなので
+    (design_document.tex \\S2.2参照)、境界はほとんどの月で変化しない。
+    変化した月だけ毎月実行の出力で目立たせられるよう、月一更新の実行
+    (cli.py)から呼び出す(2026-09にユーザー指示: 「どこかに書いておく」
+    より、実際に毎月実行するコードにメッセージを残す方が忘れない)。
+    戻り値は(現在の値, 前回の記録から変化したか)。
+    """
+    current = _provisional_start()
+    previous = None
+    if PROVISIONAL_START_STATE_PATH.exists():
+        d = json.loads(PROVISIONAL_START_STATE_PATH.read_text(encoding="utf-8"))
+        previous = (d["year"], d["month"])
+    if current is not None and current != previous:
+        PROVISIONAL_START_STATE_PATH.parent.mkdir(exist_ok=True)
+        PROVISIONAL_START_STATE_PATH.write_text(
+            json.dumps({"year": current[0], "month": current[1]}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return current, (current != previous)
 
 
 def _build_focus_series(
@@ -755,6 +783,79 @@ def generate_executive_focus_chart(
         ax.text(v + 1.5, y, f"{v:.0f}%", va="center", fontsize=10)
     ax.spines[["top", "right"]].set_visible(False)
 
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+PARTY_MATRIX_OUT_PATH = Path(__file__).resolve().parents[2] / "notes" / "images" / "party_matrix.png"
+
+# 地方重視率(104か月平均)・首長重視率(確定値期間88か月平均)の分類結果
+# (design_document.tex「政党ごとの国政/地方への偏り」・note記事「おまけ2」参照)。
+# 両指標とも閾値50%で単純に二分できるほど自明な計算ではなく、首長重視率は
+# 速報値期間を除く必要があるなど個別の判断を要するため、値ではなく分類結果
+# そのものをここに持つ。
+PARTY_MATRIX = {
+    ("国政型", "議会型"): ["自由民主党", "立憲民主党", "日本維新の会"],
+    ("国政型", "首長型"): ["国民民主党"],
+    ("地方型", "議会型"): ["日本共産党"],
+    ("地方型", "首長型"): ["公明党"],
+}
+
+
+def generate_party_matrix_chart(out_path: Path = PARTY_MATRIX_OUT_PATH) -> Path:
+    """「政党の型分類」表を画像化する。
+
+    note.comの編集画面はテーブル(表組み)を作成できないため、他の数式
+    (formula_cp.png)と同様に画像として埋め込む必要がある(2026-09に
+    ユーザー指摘)。PDF版(design_document.tex)ではなくnote記事だけの都合
+    だが、formula_cp.pngもnote・PDFの両方で同じ画像を使っている前例に
+    合わせ、dai0kai_draft.texからもこの画像を参照する。
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.font_manager as fm
+    import matplotlib.pyplot as plt
+
+    font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    if Path(font_path).exists():
+        fm.fontManager.addfont(font_path)
+        plt.rcParams["font.family"] = "Noto Sans CJK JP"
+
+    party_colors = dict(zip(PARTY_ORDER, plt.cm.tab10(np.linspace(0, 1, max(10, len(PARTY_ORDER))))))
+    rows = ["国政型", "地方型"]
+    cols = ["議会型", "首長型"]
+
+    fig, ax = plt.subplots(figsize=(9, 3.2), dpi=260)
+    ax.set_xlim(0, 3)
+    ax.set_ylim(0, 3)
+    ax.axis("off")
+    ax.invert_yaxis()
+
+    for i in range(4):
+        ax.plot([i, i], [0, 3], color="#333333", linewidth=1.2, zorder=1)
+        ax.plot([0, 3], [i, i], color="#333333", linewidth=1.2, zorder=1)
+
+    for j, col in enumerate(cols):
+        ax.text(1.5 + j, 0.5, col, ha="center", va="center", fontsize=16, weight="bold")
+    for i, row in enumerate(rows):
+        ax.text(0.5, 1.5 + i, row, ha="center", va="center", fontsize=16, weight="bold")
+
+    for i, row in enumerate(rows):
+        for j, col in enumerate(cols):
+            parties = PARTY_MATRIX[(row, col)]
+            cx, cy = 1.5 + j, 1.5 + i
+            n = len(parties)
+            fontsize = 13 if n == 1 else 11
+            step = min(0.5, 0.9 / n)
+            for k, party in enumerate(parties):
+                ax.text(
+                    cx, cy + (k - (n - 1) / 2) * step, party, ha="center", va="center",
+                    fontsize=fontsize, color=party_colors[party], weight="bold",
+                )
+
+    fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, facecolor="white", bbox_inches="tight")
     plt.close(fig)

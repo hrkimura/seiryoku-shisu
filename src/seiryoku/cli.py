@@ -157,6 +157,14 @@ def main() -> None:
     else:
         print("翌月は国政選挙が絡む月ではないため方向の目安なし")
 
+    # jichisoken(全国首長名簿)の年版更新は例年5月前後の年1回しか起きないため
+    # (design_document.tex \S2.2参照)、変化した月だけ目立たせる。
+    from . import charts
+    provisional_start, provisional_start_changed = charts.check_provisional_start_update()
+    if provisional_start_changed:
+        y, m = provisional_start
+        print(f"\n[更新あり] 確定値/速報値の境界が {y}年{m}月 に変わりました。首長重視率の分類を再確認してください。")
+
     history = cp_history.load_history()
     facts = draft_mod.build_month_facts(history)
     if os.environ.get("ANTHROPIC_API_KEY"):

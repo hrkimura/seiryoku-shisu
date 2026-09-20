@@ -121,6 +121,15 @@ def test_generate_executive_focus_chart_writes_a_png(tmp_path):
     assert out_path.stat().st_size > 0
 
 
+def test_generate_party_matrix_chart_writes_a_png(tmp_path):
+    out_path = tmp_path / "party_matrix.png"
+    result = charts.generate_party_matrix_chart(out_path=out_path)
+
+    assert result == out_path
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
 def test_generate_national_local_scatter_writes_a_png(tmp_path):
     national_history = [
         {"year": 2022 + i, "month": 1, "C_p": {"自由民主党": 0.5 + 0.01 * i, "公明党": 0.1}}
@@ -157,6 +166,32 @@ def test_provisional_start_derives_may_of_latest_jichisoken_version(monkeypatch)
 def test_provisional_start_returns_none_when_no_data(monkeypatch):
     monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {})
     assert charts._provisional_start() is None
+
+
+def test_check_provisional_start_update_flags_change_only_once(monkeypatch, tmp_path):
+    monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {"2023": {}, "2025": {}})
+    monkeypatch.setattr(charts, "PROVISIONAL_START_STATE_PATH", tmp_path / "state.json")
+
+    value, changed = charts.check_provisional_start_update()
+    assert value == (2025, 5)
+    assert changed is True
+
+    # 同じ値のまま2回目を実行すると、もう変化したとは報告されない
+    value, changed = charts.check_provisional_start_update()
+    assert value == (2025, 5)
+    assert changed is False
+
+
+def test_check_provisional_start_update_detects_new_version(monkeypatch, tmp_path):
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(charts, "PROVISIONAL_START_STATE_PATH", state_path)
+    monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {"2025": {}})
+    charts.check_provisional_start_update()
+
+    monkeypatch.setattr(jichisoken, "governor_endorsements_by_year", lambda: {"2025": {}, "2026": {}})
+    value, changed = charts.check_provisional_start_update()
+    assert value == (2026, 5)
+    assert changed is True
 
 
 def test_unified_local_election_months_every_four_years_in_april():
