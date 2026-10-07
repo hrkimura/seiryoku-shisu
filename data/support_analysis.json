@@ -1,0 +1,112 @@
+{
+  "いのちの党": {
+    "n_months": 0,
+    "start": null,
+    "end": null,
+    "n_provisional_months": 0,
+    "level_corr": null,
+    "diff_corr": null,
+    "status": "insufficient",
+    "reason": "単位根検定には24か月以上必要(現在0か月)",
+    "primary": null
+  },
+  "チームみらい": {
+    "n_months": 0,
+    "start": null,
+    "end": null,
+    "n_provisional_months": 0,
+    "level_corr": null,
+    "diff_corr": null,
+    "status": "insufficient",
+    "reason": "単位根検定には24か月以上必要(現在0か月)",
+    "primary": null
+  },
+  "中道改革連合": {
+    "n_months": 0,
+    "start": null,
+    "end": null,
+    "n_provisional_months": 0,
+    "level_corr": null,
+    "diff_corr": null,
+    "status": "insufficient",
+    "reason": "単位根検定には24か月以上必要(現在0か月)",
+    "primary": null
+  },
+  "公明党": {
+    "n_months": 0,
+    "start": null,
+    "end": null,
+    "n_provisional_months": 0,
+    "level_corr": null,
+    "diff_corr": null,
+    "status": "insufficient",
+    "reason": "単位根検定には24か月以上必要(現在0か月)",
+    "primary": null
+  },
+  "参政党": {
+    "n_months": 0,
+    "start": null,
+    "end": null,
+    "n_provisional_months": 0,
+    "level_corr": null,
+    "diff_corr": null,
+    "status": "insufficient",
+    "reason": "単位根検定には24か月以上必要(現在0か月)",
+    "primary": null
+  },
+  "国民民主党": {
+    "n_months": 0,
+    "start": null,
+    "end": null,
+    "n_provisional_months": 0,
+    "level_corr": null,
+    "diff_corr": null,
+    "status": "insufficient",
+    "reason": "単位根検定には24か月以上必要(現在0か月)",
+    "primary": null
+  },
+  "日本共産党": {
+    "n_months": 0,
+    "start": null,
+    "end": null,
+    "n_provisional_months": 0,
+    "level_corr": null,
+    "diff_corr": null,
+    "status": "insufficient",
+    "reason": "単位根検定には24か月以上必要(現在0か月)",
+    "primary": null
+  },
+  "日本維新の会": {
+    "n_months": 0,
+    "start": null,
+    "end": null,
+    "n_provisional_months": 0,
+    "level_corr": null,
+    "diff_corr": null,
+    "status": "insufficient",
+    "reason": "単位根検定には24か月以上必要(現在0か月)",
+    "primary": null
+  },
+  "立憲民主党": {
+    "n_months": 0,
+    "start": null,
+    "end": null,
+    "n_provisional_months": 0,
+    "level_corr": null,
+    "diff_corr": null,
+    "status": "insufficient",
+    "reason": "単位根検定には24か月以上必要(現在0か月)",
+    "primary": null
+  },
+  "自由民主党": {
+    "n_months": 0,
+    "start": null,
+    "end": null,
+    "n_provisional_months": 0,
+    "level_corr": null,
+    "diff_corr": null,
+    "status": "insufficient",
+    "reason": "単位根検定には24か月以上必要(現在0か月)",
+    "primary": null
+  }
+}

@@ -6,10 +6,13 @@ import os
 from datetime import date
 from pathlib import Path
 
-from . import coverage_history, cp_history, municipal_registry, national_elections, precursor, registry, turnover
+from . import (
+    coverage_history, cp_history, municipal_registry, national_elections, precursor, registry,
+    support_analysis, support_history, turnover,
+)
 from . import draft as draft_mod
 from . import forecast as forecast_mod
-from .fetch import diet
+from .fetch import diet, miharu
 from .index import compute_combined_index
 from .monthly_index import build_month_snapshots
 
@@ -71,6 +74,35 @@ def _update_monthly_pipeline() -> dict:
     }
 
 
+def _update_support_analysis(history: list[dict]) -> dict:
+    """政党支持率$S_p(t)$を1件取得・追記し、$C_p(t)$との連動を分析し直す。
+
+    取得元は現在値しか公開していないので、取得に失敗した月はその月の値が
+    欠測になるだけで、後から取り戻せない。失敗しても月次実行全体は止めない。
+    """
+    fetch_error = None
+    appended = False
+    snapshot = None
+    try:
+        snapshot = miharu.fetch_support()
+        appended = support_history.record_snapshot(snapshot)
+    except Exception as e:
+        fetch_error = f"{type(e).__name__}: {e}"
+
+    from . import charts
+    monthly_support = support_history.monthly_series(support_history.load_history())
+    results = support_analysis.analyze_all(history, monthly_support, charts._provisional_start())
+    support_analysis.save_results(results)
+    return {
+        "fetch_error": fetch_error,
+        "appended": appended,
+        "updated": snapshot["updated"] if snapshot else None,
+        "unknown_labels": snapshot["unknown_labels"] if snapshot else [],
+        "n_support_months": len(monthly_support),
+        "by_party": results,
+    }
+
+
 def run() -> dict:
     diet_seats = diet.fetch_diet_seats()
 
@@ -103,6 +135,7 @@ def run() -> dict:
     turnover_latest, turnover_prev = turnover.latest_turnover_snapshot()
 
     monthly = _update_monthly_pipeline()
+    support = _update_support_analysis(monthly["history"])
 
     return {
         "date": date.today().isoformat(),
@@ -127,10 +160,33 @@ def run() -> dict:
             "precursor_summary": monthly["precursor_summary"],
             "forecast_next_month": monthly["forecast_next_month"],
         },
+        "support_analysis": support,
         "raw": {
             "diet_seats": diet_seats,
         },
     }
+
+
+def _print_support_summary(sa: dict) -> None:
+    print("\n政党支持率 S_p(t)(三春充希氏の集計)との連動分析:")
+    if sa["fetch_error"]:
+        print(f"  [取得失敗] 今月の支持率は記録できませんでした: {sa['fetch_error']}")
+    elif sa["appended"]:
+        print(f"  {sa['updated']}更新の値を追記しました")
+    else:
+        print(f"  {sa['updated']}更新の値は記録済みのため追記なし")
+    if sa["unknown_labels"]:
+        print(f"  [要確認] 略称表にない政党名: {', '.join(sa['unknown_labels'])}"
+              "(fetch/miharu.pyのABBREVIATIONSに追加してください)")
+    print(f"  支持率の蓄積: {sa['n_support_months']}か月分")
+    for party, r in sa["by_party"].items():
+        line = f"  {party}: {r['n_months']}か月, {r['status']}"
+        corr = r.get("level_corr") if r.get("primary") == "level" else r.get("diff_corr")
+        if r.get("primary") and corr:
+            line += f", {r['primary']}相関 r={corr['r']:+.2f} (n={corr['n']})"
+        if "lag_peak" in r:
+            line += f", ラグ相関のピーク k={r['lag_peak']}"
+        print(line)
 
 
 def main() -> None:
@@ -156,6 +212,8 @@ def main() -> None:
             print(f"  {party}: {'上昇' if v > 0 else '下降'}")
     else:
         print("翌月は国政選挙が絡む月ではないため方向の目安なし")
+
+    _print_support_summary(result["support_analysis"])
 
     # jichisoken(全国首長名簿)の年版更新は例年5月前後の年1回しか起きないため
     # (design_document.tex \S2.2参照)、変化した月だけ目立たせる。
