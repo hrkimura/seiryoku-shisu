@@ -60,6 +60,9 @@ src/seiryoku/
   analysis.py                       # 補助的な集計・分析ユーティリティ
   support_history.py                 # 政党支持率S_p(t)の月次スナップショットの蓄積(追記方式)
   support_analysis.py                 # C_p(t)とS_p(t)の単位根検定・共和分検定・相関・ラグ相関
+  attribution.py                       # 前月差を窓に入った選挙・外れた選挙に分解(記事の考察用)
+  draft.py                              # 記事の下書き用の事実データの作成
+  note_export.py                         # 下書きをnote用に変換(数式のテキスト化・表の画像化)
   cli.py                              # 月次実行のエントリポイント
 ```
 
