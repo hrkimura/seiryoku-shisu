@@ -4,7 +4,9 @@ noteの編集画面は数式記法・表組み・斜体を扱えないため、�
 - $${...}$$の数式はプレーンテキスト(C_p(T)、ΔS_p(t)など)にする
 - 表は画像にして、本文には「[ここに画像: ファイル名]」と書く
 - 画像の埋め込みも同じ「[ここに画像: ファイル名]」にする(noteでは手で挿入する)
-- 図のキャプションの斜体記号を外し、段落内の改行をつなげる
+- 図・表の直後の斜体1行(*図1: ...*)はキャプションとみなし、「[キャプション: ...]」として
+  画像の直後に出す(noteでは画像のキャプション欄に貼る。図・表には毎回キャプションを付ける)
+- 段落内の改行をつなげる
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ from pathlib import Path
 
 _MATH_RE = re.compile(r"\$\$\{(.*?)\}\$\$")
 _IMAGE_RE = re.compile(r"^!\[[^\]]*\]\((?:[^)]*/)?([^)/]+)\)$")
+_CAPTION_RE = re.compile(r"^\*([^*].*[^*])\*$")
 _TEX_SYMBOLS = {r"\Delta": "Δ", r"\ell": "ℓ", r"\phi": "φ", r"\beta": "β", r"\,": ""}
 
 
@@ -26,7 +29,7 @@ def math_to_text(expr: str) -> str:
 
 def _is_block_line(line: str) -> bool:
     return (
-        line.startswith(("#", "- ", "* ", "> ", "|", "[ここに画像", "!["))
+        line.startswith(("#", "- ", "* ", "> ", "|", "[ここに画像", "[キャプション", "!["))
         or re.match(r"^\d+\. ", line) is not None
     )
 
@@ -86,10 +89,13 @@ def convert(markdown: str, table_image_dir: Path, table_prefix: str) -> str:
             out.append(f"[ここに画像: {name}]")
             continue
         image = _IMAGE_RE.match(line)
+        caption = _CAPTION_RE.match(line)
         if image:
             out.append(f"[ここに画像: {image.group(1)}]")
-        elif re.fullmatch(r"\*[^*].*[^*]\*", line):
-            out.append(line[1:-1])
+        elif caption and out and out[-1].startswith("[ここに画像"):
+            out.append(f"[キャプション: {caption.group(1)}]")
+        elif caption:
+            out.append(caption.group(1))
         elif out and line and out[-1] and not _is_block_line(line) and not _is_block_line(out[-1]):
             out[-1] += line
         else:

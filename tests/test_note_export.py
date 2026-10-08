@@ -17,7 +17,7 @@ def test_convert_rewrites_math_images_captions_and_joins_paragraph_lines(tmp_pat
     assert note_export.convert(md, tmp_path, "x") == (
         "# 題\n\n"
         "指数C_p(T)は続く行。\n\n"
-        "[ここに画像: fig.png]\n図1: 説明\n\n"
+        "[ここに画像: fig.png]\n[キャプション: 図1: 説明]\n\n"
         "- 項目1\n- 項目2\n\n"
         "> 引用\n"
     )
@@ -34,3 +34,9 @@ def test_convert_turns_tables_into_images(tmp_path):
 def test_parse_table_drops_separator_row():
     header, rows = note_export._parse_table(["| a | b |", "|---|:--:|", "| 1 | 2 |"])
     assert header == ["a", "b"] and rows == [["1", "2"]]
+
+
+def test_convert_attaches_caption_to_table_image(tmp_path):
+    md = "| a | b |\n|---|---|\n| 1 | 2 |\n*表1: 説明*\n"
+    out = note_export.convert(md, tmp_path, "x")
+    assert out == "[ここに画像: x_table1.png]\n[キャプション: 表1: 説明]\n"

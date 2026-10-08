@@ -194,6 +194,17 @@ def run() -> dict:
     }
 
 
+def support_facts(sa: dict) -> dict:
+    """記事の事実データに載せる政党支持率の節(最新の記録値と分析の状態)。"""
+    history = support_history.load_history()
+    return {
+        "latest": history[-1] if history else None,
+        "n_months": sa["n_support_months"],
+        "fetch_error": sa["fetch_error"],
+        "by_party": sa["by_party"],
+    }
+
+
 def _print_support_summary(sa: dict) -> None:
     print("\n政党支持率 S_p(t)(三春充希氏の集計)との連動分析:")
     if sa["fetch_error"]:
@@ -252,7 +263,9 @@ def main() -> None:
         print(f"\n[更新あり] 確定値/速報値の境界が {y}年{m}月 に変わりました。首長重視率の分類を再確認してください。")
 
     history = cp_history.load_history()
-    facts = draft_mod.build_month_facts(history, attribution=mi["attribution"])
+    facts = draft_mod.build_month_facts(
+        history, attribution=mi["attribution"], support=support_facts(result["support_analysis"]),
+    )
     if os.environ.get("ANTHROPIC_API_KEY"):
         draft_text = draft_mod.generate_monthly_draft(facts)
         draft_path = draft_mod.save_draft(draft_text, facts["year"], facts["month"])

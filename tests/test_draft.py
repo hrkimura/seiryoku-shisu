@@ -288,3 +288,22 @@ def test_format_facts_includes_attribution_section():
     text = "\n".join(lines)
     assert "窓から外れた選挙(2025年9月、63件)の効果: 自由民主党 +0.130" in text
     assert "2026-09-13 沖縄県(都道府県知事)" in text
+
+
+def test_format_support_lists_all_items_in_source_order_and_analysis_status():
+    s = {
+        "latest": {"updated": "2026-10-06", "source": "https://note.com/miraisyakai/n/nf05620cd5f69",
+                   "S_p": {"無党派": 37.7, "自由民主党": 33.2, "いのちの党": 0.4}},
+        "n_months": 1, "fetch_error": None,
+        "by_party": {"自由民主党": {"n_months": 0, "status": "insufficient", "primary": None,
+                                 "reason": "単位根検定には24か月以上必要(現在0か月)"}},
+    }
+    text = "\n".join(draft._format_support(s))
+    assert text.index("無党派: 37.7") < text.index("自由民主党: 33.2") < text.index("いのちの党: 0.4")
+    assert "2026-10-06更新時点" in text
+    assert "自由民主党: 重なる月 0か月、insufficient(単位根検定には24か月以上必要(現在0か月))" in text
+
+
+def test_format_support_warns_when_fetch_failed():
+    s = {"latest": None, "n_months": 0, "fetch_error": "ConnectionError: x", "by_party": {}}
+    assert "取得できなかった" in draft._format_support(s)[0]

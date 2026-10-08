@@ -58,12 +58,19 @@ SYSTEM_PROMPT = """あなたは「党勢指数」というnote連載の月次更
   因果関係を勝手に説明しない。
 - 与えられた事実(数値)以外を創作しない。事実に無い数値・出来事を書かない。
 - 常体(である調)で書く。
+- 党勢指数の表には各党の前月からの変化だけを載せ、水準(現在の値)は載せない。水準を並べると
+  政党どうしを比べる表に見えるため。並びは変化の大きい順にする。
+- 図と表には毎回キャプションを付ける(図・表の直後の行に「*図1: ...*」「*表1: ...*」の形で)。
+  noteの画像にはキャプション欄があり、note用の変換(note_export.py)でそこに貼る形に直す。
 
 毎月必ず入れる節:
 - 選挙講評: その月にあった主な選挙(事実データの「窓に入った選挙」の上位など)の結果を短くまとめる。
 - 指数への影響の考察: 事実データの前月差の分解をもとに、窓に入った選挙と窓から外れた選挙
   (12か月前の選挙)のどちらが、どの政党の値をどれだけ動かしたかを説明する。分解は計算上の
   寄与であり、それ以上の因果(選挙の勝因など)は書かない。
+- 政党支持率: 事実データの政党支持率(三春充希氏の集計)の全項目を、更新日と出典リンクを
+  添えて表にする。党勢指数とは分母も意味も違うので水準を比べない。連動分析は、蓄積が
+  足りない間は「まだ検定できる長さではない」とだけ書く。
 """
 
 
@@ -83,6 +90,7 @@ def build_month_facts(
     precursor_rows: list[dict] | None = None,
     since: tuple[int, int] | None = None,
     attribution: dict | None = None,
+    support: dict | None = None,
 ) -> dict:
     """cp_history.load_history()の結果(年月順である必要はない)から、
     下書きに必要な事実だけを取り出して整形する。
@@ -162,6 +170,7 @@ def build_month_facts(
         "diffs": diffs,
         "independent_share": latest["C_p"].get(INDEPENDENT, 0.0),
         "attribution": attribution,
+        "support": support,
         "n_events": n_events,
         "level_weight_share": latest["level_weight_share"],
         "events_in_period": events_in_period,
@@ -212,6 +221,32 @@ def _format_attribution(a: dict) -> list[str]:
     return lines
 
 
+def _format_support(s: dict) -> list[str]:
+    """政党支持率(三春充希氏の集計)の記録値と、党勢指数との連動分析の状態を整形する。
+
+    記事には毎月、最新の値の全項目を出典付きで表にして載せる。"""
+    lines = []
+    if s.get("fetch_error"):
+        lines.append(f"警告: 今回の実行では政党支持率を取得できなかった({s['fetch_error']})。下の値は前回までに記録したもの。")
+    latest = s.get("latest")
+    if latest:
+        lines.append(f"政党支持率(三春充希氏による各社世論調査の平均、{latest['source']})の{latest['updated']}更新時点の値(%、記事の掲載順):")
+        for party, v in latest["S_p"].items():
+            lines.append(f"  - {party}: {v}")
+    lines.append(f"政党支持率の蓄積: {s['n_months']}か月分(党勢指数との連動分析の状態は以下)")
+    for party, r in s.get("by_party", {}).items():
+        line = f"  - {party}: 重なる月 {r['n_months']}か月、{r['status']}"
+        corr = r.get("level_corr") if r.get("primary") == "level" else r.get("diff_corr")
+        if r.get("primary") and corr:
+            line += f"、{r['primary']}相関 r={corr['r']:+.2f}(n={corr['n']})"
+        if "lag_peak" in r:
+            line += f"、ラグ相関のピーク k={r['lag_peak']}"
+        if r.get("reason"):
+            line += f"({r['reason']})"
+        lines.append(line)
+    return lines
+
+
 def _format_facts_for_prompt(facts: dict) -> str:
     ps = facts["period_start"]
     if (ps["year"], ps["month"]) == (facts["year"], facts["month"]):
@@ -244,6 +279,8 @@ def _format_facts_for_prompt(facts: dict) -> str:
         lines.append(f"参考: 無所属を含めた全体に占める無所属の割合 {facts['independent_share']:.4f}")
     if facts.get("attribution"):
         lines.extend(_format_attribution(facts["attribution"]))
+    if facts.get("support"):
+        lines.extend(_format_support(facts["support"]))
 
     if facts["level_weight_share"]:
         lines.append(f"直近({facts['year']}年{facts['month']}月)の重みシェア内訳(どの種類の選挙がC_pを動かしたか):")

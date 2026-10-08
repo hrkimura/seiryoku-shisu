@@ -20,3 +20,14 @@ def test_monthly_series_takes_last_snapshot_in_each_month():
     assert support_history.monthly_series(history) == {
         (2026, 10): {"a": 2.0}, (2026, 12): {"a": 3.0},
     }
+
+
+def test_cli_support_facts_uses_latest_snapshot(tmp_path, monkeypatch):
+    from seiryoku import cli
+
+    monkeypatch.setattr(support_history, "HISTORY_PATH", tmp_path / "s.json")
+    support_history.record_snapshot({"updated": "2026-10-06", "S_p": {"自由民主党": 33.2}, "source": "u"}, "2026-10-08")
+    support_history.record_snapshot({"updated": "2026-11-03", "S_p": {"自由民主党": 32.0}, "source": "u"}, "2026-11-05")
+    facts = cli.support_facts({"n_support_months": 2, "fetch_error": None, "by_party": {}})
+    assert facts["latest"]["updated"] == "2026-11-03"
+    assert facts["n_months"] == 2
