@@ -7,7 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from . import (
-    coverage_history, cp_history, municipal_registry, national_elections, precursor, registry,
+    attribution, coverage_history, cp_history, municipal_registry, national_elections, precursor, registry,
     support_analysis, support_history, turnover,
 )
 from . import draft as draft_mod
@@ -41,7 +41,10 @@ def _update_monthly_pipeline() -> dict:
     (月一更新の自動化、design_document.tex \\S2参照)。既存のrun()が計算する
     その日の断面(C_p_coverage等)とは別建てで、note記事に使う月次系列を担当する。
     """
-    history = cp_history.save_history(build_month_snapshots())
+    from .monthly_index import _snapshots_from_windows, build_month_entries
+
+    month_entries = build_month_entries()
+    history = cp_history.save_history(_snapshots_from_windows(month_entries.entries, month_entries.months, 12))
 
     election_months = national_elections.compute_election_months()
     national_elections.save_election_months(election_months)
@@ -83,9 +86,13 @@ def _update_monthly_pipeline() -> dict:
         next_ym = forecast_mod._next_month(last["year"], last["month"])
         forecast_mod.record_forecast(*next_ym, forecast_result)
 
+    last_ym = (last["year"], last["month"])
+    attribution_result = attribution.decompose(month_entries, last_ym)
+
     return {
         "history": history,
         "image_dir": str(image_dir),
+        "attribution": attribution_result,
         "election_months": election_months,
         "precursor_summary": precursor.summarize_by_party(precursor_rows),
         "forecast_next_month": forecast_result,
@@ -176,6 +183,7 @@ def run() -> dict:
         "monthly_index": {
             "n_history_months": len(monthly["history"]),
             "image_dir": monthly["image_dir"],
+            "attribution": monthly["attribution"],
             "precursor_summary": monthly["precursor_summary"],
             "forecast_next_month": monthly["forecast_next_month"],
         },
@@ -244,7 +252,7 @@ def main() -> None:
         print(f"\n[更新あり] 確定値/速報値の境界が {y}年{m}月 に変わりました。首長重視率の分類を再確認してください。")
 
     history = cp_history.load_history()
-    facts = draft_mod.build_month_facts(history)
+    facts = draft_mod.build_month_facts(history, attribution=mi["attribution"])
     if os.environ.get("ANTHROPIC_API_KEY"):
         draft_text = draft_mod.generate_monthly_draft(facts)
         draft_path = draft_mod.save_draft(draft_text, facts["year"], facts["month"])

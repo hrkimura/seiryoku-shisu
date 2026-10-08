@@ -1,3 +1,4 @@
+import pytest
 from types import SimpleNamespace
 
 from seiryoku import draft, forecast, municipal_registry, national_elections, precursor, turnover
@@ -5,11 +6,11 @@ from seiryoku import draft, forecast, municipal_registry, national_elections, pr
 
 def _history():
     return [
-        {"year": 2022, "month": 5, "C_p": {"自由民主党": 0.4, "公明党": 0.15},
+        {"year": 2022, "month": 5, "C_p": {"自由民主党": 0.4, "公明党": 0.15, "無所属": 0.45},
          "n_events": 1, "level_weight_share": {"市区町村議会": 1.0}},
-        {"year": 2022, "month": 6, "C_p": {"自由民主党": 0.5, "公明党": 0.1},
+        {"year": 2022, "month": 6, "C_p": {"自由民主党": 0.5, "公明党": 0.1, "無所属": 0.4},
          "n_events": 1, "level_weight_share": {"市区町村議会": 1.0}},
-        {"year": 2022, "month": 7, "C_p": {"自由民主党": 0.55, "公明党": 0.08},
+        {"year": 2022, "month": 7, "C_p": {"自由民主党": 0.55, "公明党": 0.08, "無所属": 0.37},
          "n_events": 2, "level_weight_share": {"衆院選": 1.0}},
     ]
 
@@ -26,7 +27,8 @@ def test_build_month_facts_defaults_to_latest_single_month_when_no_last_report(m
     assert facts["year"] == 2022
     assert facts["month"] == 7
     assert facts["period_start"] == {"year": 2022, "month": 7}
-    assert facts["diffs"]["自由民主党"] == 0.55 - 0.5
+    assert facts["diffs"]["自由民主党"] == pytest.approx(0.55 / 0.63 - 0.5 / 0.6)
+    assert "無所属" not in facts["diffs"]
     assert facts["n_events"] == 2
     assert facts["events_in_period"] == ["衆院選"]
 
@@ -43,7 +45,7 @@ def test_build_month_facts_covers_multiple_months_since_last_report(monkeypatch)
     assert facts["period_start"] == {"year": 2022, "month": 6}
     assert facts["year"] == 2022 and facts["month"] == 7
     # 差分は期間開始直前(5月)から直近(7月)までの合計
-    assert facts["diffs"]["自由民主党"] == 0.55 - 0.4
+    assert facts["diffs"]["自由民主党"] == pytest.approx(0.55 / 0.63 - 0.4 / 0.55)
     # イベント数は6月・7月の合計
     assert facts["n_events"] == 1 + 2
     assert facts["events_in_period"] == ["衆院選"]
@@ -58,7 +60,7 @@ def test_build_month_facts_falls_back_to_single_month_when_since_not_older_than_
     # 前回更新がすでに直近月(7月)そのものだった(同月内の再実行)場合
     facts = draft.build_month_facts(_history(), election_months=[], since=(2022, 7))
     assert facts["period_start"] == {"year": 2022, "month": 7}
-    assert facts["diffs"]["自由民主党"] == 0.55 - 0.5  # 直前月との単純差分にフォールバック
+    assert facts["diffs"]["自由民主党"] == pytest.approx(0.55 / 0.63 - 0.5 / 0.6)  # 直前月との単純差分にフォールバック
 
 
 def test_build_month_facts_forecast_check_covers_every_month_in_period_with_a_recorded_forecast(monkeypatch):
@@ -263,3 +265,26 @@ def test_last_report_roundtrip(tmp_path, monkeypatch):
 
     draft.save_last_report(2022, 7)
     assert draft.load_last_report() == (2022, 7)
+
+
+def test_exclude_independent_renormalizes_named_parties():
+    assert draft.exclude_independent({"無所属": 0.5, "自由民主党": 0.3, "公明党": 0.2}) == {
+        "自由民主党": 0.6, "公明党": 0.4,
+    }
+    assert draft.exclude_independent({"無所属": 1.0}) == {}
+
+
+def test_format_facts_includes_attribution_section():
+    a = {
+        "year": 2026, "month": 9, "exiting_month": {"year": 2025, "month": 9},
+        "total": {"自由民主党": 0.001}, "entered": {"自由民主党": -0.0003}, "exited": {"自由民主党": 0.0013},
+        "entered_by_level": {"都道府県知事": {"自由民主党": -0.0002}},
+        "n_entered": 59, "n_exited": 63,
+        "top_entered": [{"name": "沖縄県", "level": "都道府県知事", "vote_date": "2026-09-13",
+                         "shares": {"自由民主党": 0.5, "公明党": 0.5}, "effect": {"自由民主党": -0.0002}}],
+        "top_exited": [],
+    }
+    lines = draft._format_attribution(a)
+    text = "\n".join(lines)
+    assert "窓から外れた選挙(2025年9月、63件)の効果: 自由民主党 +0.130" in text
+    assert "2026-09-13 沖縄県(都道府県知事)" in text

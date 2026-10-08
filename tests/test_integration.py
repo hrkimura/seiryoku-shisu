@@ -43,6 +43,12 @@ def test_run_produces_consistent_indices():
     for name in ("cp_and_level_share.png", "national_vs_local.png", "executive_focus.png"):
         assert (image_dir / name).exists()
 
+    # 前月差の分解は、無所属を除いて正規化した割合の差なので、全政党の合計はほぼ0になる
+    att = result["monthly_index"]["attribution"]
+    assert abs(sum(att["total"].values())) < 1e-9
+    for p in att["total"]:
+        assert abs(att["total"][p] - att["entered"].get(p, 0.0) - att["exited"].get(p, 0.0)) < 1e-9
+
     today = date.today().isoformat()
     history = coverage_history.load_history()
     assert any(h["date"] == today for h in history)

@@ -58,7 +58,23 @@ SYSTEM_PROMPT = """あなたは「党勢指数」というnote連載の月次更
   因果関係を勝手に説明しない。
 - 与えられた事実(数値)以外を創作しない。事実に無い数値・出来事を書かない。
 - 常体(である調)で書く。
+
+毎月必ず入れる節:
+- 選挙講評: その月にあった主な選挙(事実データの「窓に入った選挙」の上位など)の結果を短くまとめる。
+- 指数への影響の考察: 事実データの前月差の分解をもとに、窓に入った選挙と窓から外れた選挙
+  (12か月前の選挙)のどちらが、どの政党の値をどれだけ動かしたかを説明する。分解は計算上の
+  寄与であり、それ以上の因果(選挙の勝因など)は書かない。
 """
+
+
+INDEPENDENT = "無所属"
+
+
+def exclude_independent(c_p: dict[str, float]) -> dict[str, float]:
+    total = sum(v for p, v in c_p.items() if p != INDEPENDENT)
+    if total == 0:
+        return {}
+    return {p: v / total for p, v in c_p.items() if p != INDEPENDENT}
 
 
 def build_month_facts(
@@ -66,6 +82,7 @@ def build_month_facts(
     election_months: list[tuple[int, int]] | None = None,
     precursor_rows: list[dict] | None = None,
     since: tuple[int, int] | None = None,
+    attribution: dict | None = None,
 ) -> dict:
     """cp_history.load_history()の結果(年月順である必要はない)から、
     下書きに必要な事実だけを取り出して整形する。
@@ -93,10 +110,14 @@ def build_month_facts(
     period_start_idx = history.index(period[0])
     baseline = history[period_start_idx - 1] if period_start_idx > 0 else None
 
+    # 記事では図1の1段目と同じく、無所属を除いて正規化した割合で各党の増減を見る。
+    # 無所属は直近の首長選挙の推薦・支持の反映が遅れるうえ、統一的な政策集団でもないため。
+    latest_cp = exclude_independent(latest["C_p"])
     diffs: dict[str, float] = {}
     if baseline is not None:
-        parties = set(latest["C_p"]) | set(baseline["C_p"])
-        diffs = {p: latest["C_p"].get(p, 0.0) - baseline["C_p"].get(p, 0.0) for p in parties}
+        baseline_cp = exclude_independent(baseline["C_p"])
+        parties = set(latest_cp) | set(baseline_cp)
+        diffs = {p: latest_cp.get(p, 0.0) - baseline_cp.get(p, 0.0) for p in parties}
 
     if election_months is None:
         election_months = national_elections.load_election_months()
@@ -137,8 +158,10 @@ def build_month_facts(
         "year": year,
         "month": month,
         "period_start": {"year": period[0]["year"], "month": period[0]["month"]},
-        "C_p": latest["C_p"],
+        "C_p": latest_cp,
         "diffs": diffs,
+        "independent_share": latest["C_p"].get(INDEPENDENT, 0.0),
+        "attribution": attribution,
         "n_events": n_events,
         "level_weight_share": latest["level_weight_share"],
         "events_in_period": events_in_period,
@@ -156,6 +179,37 @@ def _cache_refresh_incomplete() -> bool:
     指摘: クロールが月をまたいで完了しないまま記事生成日を迎えると、沖縄県
     知事選のような見落としが静かに起こりうる)。"""
     return turnover.REFRESH_PROGRESS_PATH.exists() or municipal_registry.GIKAI_REFRESH_PROGRESS_PATH.exists()
+
+
+def _fmt_effect(effect: dict[str, float], threshold: float = 5e-5) -> str:
+    items = sorted(((p, v) for p, v in effect.items() if abs(v) >= threshold), key=lambda kv: -abs(kv[1]))
+    return "、".join(f"{p} {100 * v:+.3f}" for p, v in items) or "ほぼ変化なし"
+
+
+def _fmt_shares(shares: dict[str, float]) -> str:
+    items = sorted(shares.items(), key=lambda kv: -kv[1])
+    return "、".join(f"{p} {v:.2f}" for p, v in items)
+
+
+def _format_attribution(a: dict) -> list[str]:
+    """前月差の分解(attribution.decompose)を記事の「指数への影響の考察」用に整形する。"""
+    ex = a["exiting_month"]
+    lines = [
+        f"{a['year']}年{a['month']}月の前月差の分解(無所属を除いて正規化した割合、単位はポイント):",
+        f"  - 全体: {_fmt_effect(a['total'])}",
+        f"  - 窓に入った選挙({a['year']}年{a['month']}月、{a['n_entered']}件)の効果: {_fmt_effect(a['entered'])}",
+        f"  - 窓から外れた選挙({ex['year']}年{ex['month']}月、{a['n_exited']}件)の効果: {_fmt_effect(a['exited'])}",
+        "  - 窓に入った選挙の効果の階層別内訳:",
+    ]
+    for level, effect in a["entered_by_level"].items():
+        lines.append(f"    - {level}: {_fmt_effect(effect)}")
+    lines.append("  - 窓に入った選挙のうち影響の大きいもの(その1件を抜いた場合との差):")
+    for r in a["top_entered"]:
+        lines.append(f"    - {r['vote_date']} {r['name']}({r['level']}) 構成[{_fmt_shares(r['shares'])}] 効果: {_fmt_effect(r['effect'])}")
+    lines.append("  - 窓から外れた選挙のうち影響の大きいもの(その1件だけが外れた場合の変化):")
+    for r in a["top_exited"]:
+        lines.append(f"    - {r['vote_date']} {r['name']}({r['level']}) 構成[{_fmt_shares(r['shares'])}] 効果: {_fmt_effect(r['effect'])}")
+    return lines
 
 
 def _format_facts_for_prompt(facts: dict) -> str:
@@ -178,12 +232,18 @@ def _format_facts_for_prompt(facts: dict) -> str:
         lines.append(f"この期間に投票日があった国政選挙: {', '.join(facts['events_in_period'])}")
 
     if facts["diffs"]:
-        lines.append(f"政党ごとのC_p(期間開始直前から{facts['year']}年{facts['month']}月までの差分、絶対値が大きい順):")
+        lines.append(
+            f"政党ごとのC_p(無所属を除いて正規化した割合。期間開始直前から{facts['year']}年{facts['month']}月までの差分、絶対値が大きい順):"
+        )
         for party, d in sorted(facts["diffs"].items(), key=lambda kv: -abs(kv[1])):
             current = facts["C_p"].get(party, 0.0)
             lines.append(f"  - {party}: {d:+.4f}(現在の値 {current:.4f})")
     else:
         lines.append("比較対象の月のデータが無いため、差分を計算していない(今回が初回の可能性)。")
+    if "independent_share" in facts:
+        lines.append(f"参考: 無所属を含めた全体に占める無所属の割合 {facts['independent_share']:.4f}")
+    if facts.get("attribution"):
+        lines.extend(_format_attribution(facts["attribution"]))
 
     if facts["level_weight_share"]:
         lines.append(f"直近({facts['year']}年{facts['month']}月)の重みシェア内訳(どの種類の選挙がC_pを動かしたか):")

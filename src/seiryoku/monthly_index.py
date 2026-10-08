@@ -197,11 +197,33 @@ ASSEMBLY_LEVEL_TYPES = frozenset({"衆院選", "参院選", "都道府県議会"
 EXECUTIVE_LEVEL_TYPES = frozenset({"都道府県知事", "市区町村長"})
 
 
+@dataclass
+class MonthEntries:
+    """月ごとの選挙イベント。entries[ym][i]とlabels[ym][i]が同じ選挙を指す。"""
+    entries: dict[tuple[int, int], list[tuple[str, float, float, dict[str, float]]]]
+    labels: dict[tuple[int, int], list[dict]]
+    months: list[tuple[int, int]]
+
+
 def build_month_snapshots(
     min_year: int = MIN_YEAR, window_months: int = 12, local_only: bool = False,
     national_only: bool = False, only_level: str | frozenset[str] | None = None,
     assembly_only: bool = False, executive_only: bool = False,
 ) -> list[MonthSnapshot]:
+    """月ごとの選挙イベント(build_month_entries)を窓で集計して$C_p(t)$を再構成する。
+    引数の意味はbuild_month_entriesと同じ。"""
+    me = build_month_entries(
+        min_year=min_year, local_only=local_only, national_only=national_only,
+        only_level=only_level, assembly_only=assembly_only, executive_only=executive_only,
+    )
+    return _snapshots_from_windows(me.entries, me.months, window_months)
+
+
+def build_month_entries(
+    min_year: int = MIN_YEAR, local_only: bool = False,
+    national_only: bool = False, only_level: str | frozenset[str] | None = None,
+    assembly_only: bool = False, executive_only: bool = False,
+) -> MonthEntries:
     """min_year以降、月ごとにその月を含めてwindow_monthsか月分遡って実際にあった
     選挙を集計してC_p(t)を再構成する(モジュールdocstring参照)。既定の12か月は、
     どの時点で切っても暦月の構成が同じになり、統一地方選のような季節的な偏りを
@@ -308,8 +330,9 @@ def build_month_snapshots(
             name = municipal_registry.jurisdiction_name(jid)
             size = muni_pop.get(name) if name else None
             level_type = "市区町村議会"
+        gikai_name = gov_id_to_name.get(jid) if level_type == "都道府県議会" else name
         if size is not None and (only_levels is None or level_type in only_levels):
-            gikai_local_entries.append((parsed, size, level_type))
+            gikai_local_entries.append((gikai_name, parsed, size, level_type))
 
     # 実行日を含む月はまだ終わっておらず、その月の選挙が全て出揃っているとは
     # 限らないため、直近の完全に終わった暦月までを対象にする(2026-09に
@@ -328,8 +351,10 @@ def build_month_snapshots(
     # (実測でn∝P^0.27〜0.41程度)、n_eP_eをそのまま使うと大自治体の影響が
     # 意図せず人口の1.3〜1.4乗ぶん過大になっていたため、2026-09に分離した。
     entries_by_month: dict[tuple[int, int], list[tuple[str, float, float, dict[str, float]]]] = {}
+    labels_by_month: dict[tuple[int, int], list[dict]] = {}
     for ym in months:
         entries: list[tuple[str, float, float, dict[str, float]]] = []
+        labels: list[dict] = []
 
         for name, parsed, size, by_year, level_type in local_entries:
             for term in _terms_in_month(parsed, ym):
@@ -341,27 +366,32 @@ def build_month_snapshots(
                     endorsing = endorsements.municipal_endorsing_parties(by_year, name, term["vote_date"])
                 shares = _effective_party_shares(term["party"], endorsing, national_parties)
                 entries.append((level_type, size, 1.0, shares))  # 首長選挙は常にn_e=1
+                labels.append({"name": name, "level": level_type, "vote_date": term["vote_date"]})
 
-        for parsed, size, level_type in gikai_local_entries:
+        for gikai_name, parsed, size, level_type in gikai_local_entries:
             for term in _terms_in_month(parsed, ym):
                 seats = term["seats"]
                 n_e = sum(seats.values())
                 if n_e == 0:
                     continue
                 entries.append((level_type, size, n_e, _phi(seats, national_parties)))
+                labels.append({"name": gikai_name, "level": level_type, "vote_date": term.get("vote_date")})
 
         for date_key, seats in sangiin_entries:
             if date_key == ym:
                 n_e = sum(seats.values())
                 entries.append(("参院選", national_pop, n_e, _phi(seats, national_parties)))
+                labels.append({"name": "参院選", "level": "参院選", "vote_date": None})
         for date_key, seats in shugiin_entries:
             if date_key == ym:
                 n_e = sum(seats.values())
                 entries.append(("衆院選", national_pop, n_e, _phi(seats, national_parties)))
+                labels.append({"name": "衆院選", "level": "衆院選", "vote_date": None})
 
         entries_by_month[ym] = entries
+        labels_by_month[ym] = labels
 
-    return _snapshots_from_windows(entries_by_month, months, window_months)
+    return MonthEntries(entries=entries_by_month, labels=labels_by_month, months=months)
 
 
 def _months_back(ym: tuple[int, int], n: int) -> list[tuple[int, int]]:
