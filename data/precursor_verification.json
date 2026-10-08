@@ -31,9 +31,9 @@
     "election_a": "2019-07-21",
     "election_b": "2022-07-10",
     "party": "日本維新の会",
-    "local_direction": -1,
+    "local_direction": 1,
     "actual_direction": 1,
-    "match": false
+    "match": true
   },
   {
     "chamber": "参院選",
@@ -130,18 +130,18 @@
     "election_a": "2021-10-31",
     "election_b": "2024-10-27",
     "party": "立憲民主党",
-    "local_direction": 1,
+    "local_direction": -1,
     "actual_direction": 1,
-    "match": true
+    "match": false
   },
   {
     "chamber": "衆院選",
     "election_a": "2021-10-31",
     "election_b": "2024-10-27",
     "party": "日本維新の会",
-    "local_direction": 1,
+    "local_direction": -1,
     "actual_direction": -1,
-    "match": false
+    "match": true
   },
   {
     "chamber": "衆院選",

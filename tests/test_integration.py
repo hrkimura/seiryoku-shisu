@@ -2,6 +2,7 @@
 キャッシュ経由)で通しで実行し、各構成要素が正しく組み合わさることを確認する。
 """
 from datetime import date
+from pathlib import Path
 
 from seiryoku import coverage_history
 from seiryoku.cli import run
@@ -36,6 +37,12 @@ def test_run_produces_consistent_indices():
     assert abs(net_total) < 1e-6, f"net_shareの合計が0にならない: {net_total}"
 
     # run()のたびにその日のカバレッジが記録される(note記事のグラフ用)
+    # 月次実行の図はデータ月ごとのディレクトリに出力され、記事用のnotes/images/は触らない
+    image_dir = Path(result["monthly_index"]["image_dir"])
+    assert "notes" not in image_dir.parts
+    for name in ("cp_and_level_share.png", "national_vs_local.png", "executive_focus.png"):
+        assert (image_dir / name).exists()
+
     today = date.today().isoformat()
     history = coverage_history.load_history()
     assert any(h["date"] == today for h in history)

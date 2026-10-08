@@ -245,8 +245,8 @@ def build_month_snapshots(
     else:
         only_levels = None
 
-    from . import municipal_registry, turnover
-    from .fetch import jichisoken
+    from . import endorsements, municipal_registry, turnover
+    from .fetch import jichisoken, wikipedia_governor
 
     include_sangiin = only_levels is None or "参院選" in only_levels
     include_shugiin = only_levels is None or "衆院選" in only_levels
@@ -284,6 +284,13 @@ def build_month_snapshots(
             level_type = "市区町村長"
         if name and size is not None and (only_levels is None or level_type in only_levels):
             local_entries.append((name, parsed, size, by_year, level_type))
+
+    # 知事選挙のWikipedia参照はまとめて引き、保存を1回で済ませる(endorsements.py参照)。
+    wiki_cache = wikipedia_governor.lookup_many(sorted({
+        (name, term["vote_date"])
+        for name, parsed, _, _, level_type in local_entries if level_type == "都道府県知事"
+        for _, term in parsed if term.get("vote_date") and term["vote_date"] >= f"{min_year - 1}"
+    }))
 
     # 都道府県議会・市区町村議会(gikai)は、首長と違い候補者個人の推薦・支持政党を
     # 記録した情報源が無いため、jichisoken補正は試みず届出政党のみで$\\phi_p(e)$を
@@ -326,8 +333,12 @@ def build_month_snapshots(
 
         for name, parsed, size, by_year, level_type in local_entries:
             for term in _terms_in_month(parsed, ym):
-                endorsement = jichisoken.endorsement_for_vote_year(by_year, name, term["vote_date"])
-                endorsing = endorsement.endorsing_parties if endorsement else []
+                if level_type == "都道府県知事":
+                    endorsing = endorsements.governor_endorsing_parties(
+                        by_year, name, term["vote_date"], wiki_cache=wiki_cache,
+                    )
+                else:
+                    endorsing = endorsements.municipal_endorsing_parties(by_year, name, term["vote_date"])
                 shares = _effective_party_shares(term["party"], endorsing, national_parties)
                 entries.append((level_type, size, 1.0, shares))  # 首長選挙は常にn_e=1
 

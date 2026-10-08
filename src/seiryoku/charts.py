@@ -77,7 +77,7 @@ PROVISIONAL_START_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "p
 def check_provisional_start_update() -> tuple[tuple[int, int] | None, bool]:
     """_provisional_start()の値を前回実行時の記録と比較する。
 
-    jichisokenが新しい年版を公開するのは例年5月前後だけなので
+    jichisokenが新しい年版を公開するのは年1回(2024年版は2025年2月、2025年版は2026年1月)だけなので
     (design_document.tex \\S2.2参照)、境界はほとんどの月で変化しない。
     変化した月だけ毎月実行の出力で目立たせられるよう、月一更新の実行
     (cli.py)から呼び出す(2026-09にユーザー指示: 「どこかに書いておく」

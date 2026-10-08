@@ -23,6 +23,7 @@ _UA = "seiryoku-shisu-bot/0.1 (+https://github.com/; personal research project)"
 # 変更した。
 _MIN_INTERVAL = {
     "go2senkyo.com": 8.0,
+    "ja.wikipedia.org": 1.0,
 }
 _DEFAULT_INTERVAL = 0.2
 _last_request_time: dict[str, float] = {}

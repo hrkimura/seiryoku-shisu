@@ -19,6 +19,16 @@ from .monthly_index import build_month_snapshots
 OUTPUT_DIR = Path(__file__).resolve().parents[2] / "output"
 
 
+def monthly_image_dir(history: list[dict], base: Path = OUTPUT_DIR) -> Path:
+    """月次実行の図の保存先。データの最新月ごとに分ける。
+
+    notes/images/には公開済みの記事が参照する図が置かれているので、月次実行では
+    そこに書き込まない。記事に使う図は、ここから回ごとの名前で手動でコピーする。
+    """
+    last = max(history, key=lambda h: (h["year"], h["month"]))
+    return base / "images" / f"{last['year']:04d}-{last['month']:02d}"
+
+
 def _snapshot_to_dict(s) -> dict:
     return {
         "year": s.year, "month": s.month, "C_p": s.C_p,
@@ -38,22 +48,29 @@ def _update_monthly_pipeline() -> dict:
 
     from . import charts
 
+    image_dir = monthly_image_dir(history)
+
     local_history = [_snapshot_to_dict(s) for s in build_month_snapshots(local_only=True)]
     precursor_rows = precursor.update_precursor_table(local_history)
 
     national_history = [_snapshot_to_dict(s) for s in build_month_snapshots(national_only=True)]
-    charts.generate_national_local_scatter(national_history, local_history)
+    charts.generate_national_local_scatter(
+        national_history, local_history, out_path=image_dir / "national_vs_local.png",
+    )
 
     executive_history = [_snapshot_to_dict(s) for s in build_month_snapshots(executive_only=True)]
     local_assembly_history = [
         _snapshot_to_dict(s)
         for s in build_month_snapshots(only_level=frozenset({"都道府県議会", "市区町村議会"}))
     ]
-    charts.generate_executive_focus_chart(executive_history, local_assembly_history)
+    charts.generate_executive_focus_chart(
+        executive_history, local_assembly_history, out_path=image_dir / "executive_focus.png",
+    )
 
     charts.generate_main_chart(
         history, national_history=national_history, local_history=local_history,
         executive_history=executive_history, local_assembly_history=local_assembly_history,
+        out_path=image_dir / "cp_and_level_share.png",
     )
 
     # TimesFM-3個別予測はバックテスト再検証の結果、機械的な符号ルール(下記)を
@@ -68,6 +85,7 @@ def _update_monthly_pipeline() -> dict:
 
     return {
         "history": history,
+        "image_dir": str(image_dir),
         "election_months": election_months,
         "precursor_summary": precursor.summarize_by_party(precursor_rows),
         "forecast_next_month": forecast_result,
@@ -157,6 +175,7 @@ def run() -> dict:
         "municipal_registry_coverage": muni_coverage,
         "monthly_index": {
             "n_history_months": len(monthly["history"]),
+            "image_dir": monthly["image_dir"],
             "precursor_summary": monthly["precursor_summary"],
             "forecast_next_month": monthly["forecast_next_month"],
         },
@@ -206,6 +225,7 @@ def main() -> None:
 
     mi = result["monthly_index"]
     print(f"\n党勢指数 C_p(T)の月次履歴: {mi['n_history_months']}か月分を保存")
+    print(f"図の保存先: {mi['image_dir']}")
     if mi["forecast_next_month"] is not None:
         print("翌月の方向の目安(国政/地方の型からの機械的ルール):")
         for party, v in sorted(mi["forecast_next_month"].items(), key=lambda kv: -kv[1]):
@@ -215,7 +235,7 @@ def main() -> None:
 
     _print_support_summary(result["support_analysis"])
 
-    # jichisoken(全国首長名簿)の年版更新は例年5月前後の年1回しか起きないため
+    # jichisoken(全国首長名簿)の年版更新は年1回(収録期間末の4月から9〜10か月後の1〜2月ごろ)しか起きないため
     # (design_document.tex \S2.2参照)、変化した月だけ目立たせる。
     from . import charts
     provisional_start, provisional_start_changed = charts.check_provisional_start_update()

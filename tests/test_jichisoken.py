@@ -1,3 +1,4 @@
+from seiryoku.fetch import jichisoken
 from seiryoku.fetch.jichisoken import (
     Endorsement,
     _date_column_index,
@@ -113,3 +114,81 @@ def test_merge_latest_prefers_newer_year_version():
     }
     merged = merge_latest(by_year)
     assert merged["A市"].endorsing_parties == ["公明党"]
+
+
+_INDEX_HTML = (
+    b'<a href="/jichitaisenkyo/2025/">2025</a>'
+    b'<a href="https://jichisoken.jp/jichitaisenkyo/2026/">2026</a>'
+)
+
+
+def test_discover_years_always_refetches_index(monkeypatch):
+    calls = []
+
+    def fake_fetch(url, *, force=False, retries=1):
+        calls.append(force)
+        return _INDEX_HTML
+
+    monkeypatch.setattr(jichisoken, "fetch", fake_fetch)
+    assert jichisoken.discover_years() == [
+        ("2025", "https://jichisoken.jp/jichitaisenkyo/2025/"),
+        ("2026", "https://jichisoken.jp/jichitaisenkyo/2026/"),
+    ]
+    assert calls == [True]
+
+
+def test_discover_years_falls_back_to_cache_when_offline(monkeypatch):
+    def fake_fetch(url, *, force=False, retries=1):
+        if force:
+            raise ConnectionError("offline")
+        return _INDEX_HTML
+
+    monkeypatch.setattr(jichisoken, "fetch", fake_fetch)
+    assert [y for y, _ in jichisoken.discover_years()] == ["2025", "2026"]
+
+
+def test_endorsing_parties_reads_local_organization_notes():
+    header = ["自", "公", "社", "その他1", "その他2"]
+    row = [None, None, None, "公明党県本部推薦", "社民党県連支持"]
+    assert _endorsing_parties(row, header) == ["公明党", "社会民主党"]
+
+
+def test_endorsing_parties_ignores_notes_without_endorsement_words():
+    header = ["自", "その他1"]
+    assert _endorsing_parties([None, "ひまそらあかね"], header) == []
+    assert _endorsing_parties([None, "N国党公認"], header) == []
+
+
+def _governor_workbook(rows):
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "都道府県知事"
+    ws.append(["自治体名", "選挙執行日", "立候補者名", "党派", "自", "立民", "公", "共", "その他1"])
+    for r in rows:
+        ws.append(r)
+    return wb
+
+
+def test_parse_governor_sheet_records_rival_endorsements():
+    wb = _governor_workbook([
+        ["栃木県", "2024年", "福田", "無所属", None, None, "〇", None, "公明党県本部推薦"],
+        [None, None, "針川", "無所属", None, None, None, "〇", "社民党県連支持"],
+    ])
+    e = jichisoken._parse_governor_sheet(wb, "2025")["栃木県"]
+    assert e.endorsing_parties == ["公明党"]
+    assert e.rival_endorsing_parties == ["日本共産党", "社会民主党"]
+
+
+def test_apply_corrections_replaces_only_the_matching_election():
+    by_year = {
+        "2022": {"兵庫県": Endorsement("兵庫県", "無所属", [], "2021年", "2022", rival_endorsing_parties=["自由民主党"])},
+        "2018": {"兵庫県": Endorsement("兵庫県", "無所属", ["公明党"], "2017年", "2018")},
+    }
+    jichisoken.apply_corrections(by_year, {"兵庫県|2021": {
+        "endorsing_parties": ["自由民主党"], "rival_endorsing_parties": ["日本共産党"],
+    }})
+    assert by_year["2022"]["兵庫県"].endorsing_parties == ["自由民主党"]
+    assert by_year["2022"]["兵庫県"].rival_endorsing_parties == ["日本共産党"]
+    assert by_year["2018"]["兵庫県"].endorsing_parties == ["公明党"]

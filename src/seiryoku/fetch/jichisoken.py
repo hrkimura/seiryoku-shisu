@@ -25,10 +25,12 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
+from pathlib import Path
 
 import openpyxl
 from bs4 import BeautifulSoup
@@ -36,8 +38,9 @@ from bs4 import BeautifulSoup
 from .util import fetch
 
 INDEX_URL = "https://jichisoken.jp/jichitaisenkyo/"
+CORRECTIONS_PATH = Path(__file__).resolve().parents[3] / "data" / "meibo_corrections.json"
 
-# その他1/その他2・社大/大(沖縄独自の地域政党)は国政政党ではないため対象外とし、
+# 社大/大(沖縄独自の地域政党)は国政政党ではないため対象外とし、
 # 無所属・諸派側の集計に委ねる([[seiryoku_shisu_design]]の「国政政党のみ追跡」方針)。
 _PARTY_COLUMNS = {
     "自": "自由民主党",
@@ -51,6 +54,23 @@ _PARTY_COLUMNS = {
     "維": "日本維新の会",
 }
 
+# 政党列は党本部レベルの推薦・支持しか記録せず、県本部・県連など地方組織独自の
+# 推薦・支持は「その他1/2」欄に「公明党県本部推薦」のような文言で書かれる(年版の凡例)。
+# 推薦・支持はどのレベルのものでも数える方針なので、この欄も読む。
+_OTHER_COLUMNS = ("その他1", "その他2")
+_OTHER_NOTE_KEYWORDS = re.compile(r"推薦|支持|支援|応援")
+_OTHER_NOTE_PARTIES: list[tuple[str, str]] = [
+    (r"自由民主党|自民党|自民", "自由民主党"),
+    (r"立憲民主党|立憲", "立憲民主党"),
+    (r"国民民主党|国民民主", "国民民主党"),
+    (r"公明党|公明", "公明党"),
+    (r"日本共産党|共産党", "日本共産党"),
+    (r"社会民主党|社民党|社民", "社会民主党"),
+    (r"日本維新の会|維新", "日本維新の会"),
+    (r"参政党", "参政党"),
+    (r"れいわ新選組", "いのちの党"),
+]
+
 _DATE_COLUMN_CANDIDATES = ("選挙執行日", "選挙執行月日", "選挙執行年")
 
 
@@ -61,12 +81,22 @@ class Endorsement:
     endorsing_parties: list[str]  # 推薦・支持を表明した国政政党(複数可、無ければ空)
     vote_date: str
     year: str  # データの年版(古い年版を新しい年版で上書きするために使う)
+    # 同じ選挙の落選者を推薦・支持した政党。他の情報源と突き合わせるときに、
+    # 名簿と矛盾する推薦(名簿では別の候補を推していた政党)を除くのに使う。
+    rival_endorsing_parties: list[str] = field(default_factory=list)
 
 
 def discover_years() -> list[tuple[str, str]]:
     """(年版, ページURL) を新しい順ではなく古い順に返す(合算時に新しい年版で
     上書きするため)。"""
-    html = fetch(INDEX_URL).decode("utf-8", errors="ignore")
+    # 目次だけはキャッシュを使わず毎回取り直す。キャッシュのままだと新しい年版が
+    # 公開されても見つからない。取得に失敗したら手元の目次で続ける。retries=0は、
+    # オフライン時にutil.fetchのWAFクールダウン(11分)を待たないため。
+    try:
+        raw = fetch(INDEX_URL, force=True, retries=0)
+    except Exception:
+        raw = fetch(INDEX_URL)
+    html = raw.decode("utf-8", errors="ignore")
     soup = BeautifulSoup(html, "html.parser")
     years: dict[str, str] = {}
     for a in soup.find_all("a", href=True):
@@ -119,6 +149,18 @@ def _endorsing_parties(row: list, header: list) -> list[str]:
         if idx < len(row) and row[idx] not in (None, ""):
             if party not in parties:
                 parties.append(party)
+    for col_name in _OTHER_COLUMNS:
+        if col_name not in header:
+            continue
+        idx = header.index(col_name)
+        note = row[idx] if idx < len(row) else None
+        if not isinstance(note, str) or not _OTHER_NOTE_KEYWORDS.search(note):
+            continue
+        for pattern, party in _OTHER_NOTE_PARTIES:
+            if re.search(pattern, note):
+                if party not in parties:
+                    parties.append(party)
+                break
     return parties
 
 
@@ -145,6 +187,7 @@ def _parse_governor_sheet(wb, year: str) -> dict[str, Endorsement]:
     party_idx = header.index("党派") if "党派" in header else None
 
     result: dict[str, Endorsement] = {}
+    rivals: dict[str, list[str]] = {}
     current_pref: str | None = None
     is_winner_row = False
     for row in rows[header_idx + 1 :]:
@@ -154,7 +197,10 @@ def _parse_governor_sheet(wb, year: str) -> dict[str, Endorsement]:
             is_winner_row = True  # 各都道府県ブロックの先頭行(得票数最多)が当選者
         else:
             is_winner_row = False
-        if current_pref is None or not is_winner_row:
+        if current_pref is None:
+            continue
+        if not is_winner_row:
+            _add_unique(rivals.setdefault(current_pref, []), _endorsing_parties(row, header))
             continue
         result[current_pref] = Endorsement(
             name=current_pref,
@@ -163,7 +209,20 @@ def _parse_governor_sheet(wb, year: str) -> dict[str, Endorsement]:
             vote_date=str(row[date_idx]) if date_idx is not None and row[date_idx] else "",
             year=year,
         )
+    _attach_rivals(result, rivals)
     return result
+
+
+def _add_unique(target: list[str], items: list[str]) -> None:
+    for p in items:
+        if p not in target:
+            target.append(p)
+
+
+def _attach_rivals(result: dict[str, Endorsement], rivals: dict[str, list[str]]) -> None:
+    for name, parties in rivals.items():
+        if name in result:
+            result[name].rival_endorsing_parties = parties
 
 
 def _parse_municipal_sheet(wb, year: str) -> dict[str, Endorsement]:
@@ -183,6 +242,7 @@ def _parse_municipal_sheet(wb, year: str) -> dict[str, Endorsement]:
     elected_idx = header.index("当落") if "当落" in header else None
 
     result: dict[str, Endorsement] = {}
+    rivals: dict[str, list[str]] = {}
     current_name: str | None = None
     is_winner_row = False
     for row in rows[header_idx + 1 :]:
@@ -195,7 +255,10 @@ def _parse_municipal_sheet(wb, year: str) -> dict[str, Endorsement]:
         else:
             # 無い年版: 各自治体ブロックの先頭行(得票数最多)を当選者とみなす。
             is_winner_row = name_idx < len(row) and row[name_idx] is not None
-        if current_name is None or not is_winner_row:
+        if current_name is None:
+            continue
+        if not is_winner_row:
+            _add_unique(rivals.setdefault(current_name, []), _endorsing_parties(row, header))
             continue
         result[current_name] = Endorsement(
             name=current_name,
@@ -204,6 +267,7 @@ def _parse_municipal_sheet(wb, year: str) -> dict[str, Endorsement]:
             vote_date=str(row[date_idx]) if date_idx is not None and row[date_idx] else "",
             year=year,
         )
+    _attach_rivals(result, rivals)
     return result
 
 
@@ -222,7 +286,28 @@ def governor_endorsements_by_year(years_back: int = 8) -> dict[str, dict[str, En
             result[year] = _parse_governor_sheet(wb, year)
         except Exception as e:
             warnings.warn(f"jichisoken {year}年版(知事)の解析に失敗: {e}")
+    apply_corrections(result, load_corrections())
     return result
+
+
+def load_corrections(path: Path = CORRECTIONS_PATH) -> dict:
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return {}
+
+
+def apply_corrections(by_year: dict[str, dict[str, Endorsement]], corrections: dict) -> None:
+    """明らかな誤記(推薦の印が隣の候補者の行にずれている等)を人手の修正で置き換える。
+
+    キーは「自治体名|当選年」。修正の根拠はdata/meibo_corrections.jsonに出典とともに残す。
+    """
+    for key, fix in corrections.items():
+        name, vote_year = key.split("|")
+        for entries in by_year.values():
+            entry = entries.get(name)
+            if entry is not None and extract_vote_year(entry.vote_date) == vote_year:
+                entry.endorsing_parties = list(fix["endorsing_parties"])
+                entry.rival_endorsing_parties = list(fix["rival_endorsing_parties"])
 
 
 def municipal_head_endorsements_by_year(years_back: int = 8) -> dict[str, dict[str, Endorsement]]:
