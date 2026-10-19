@@ -200,3 +200,30 @@ def test_unified_local_election_months_every_four_years_in_april():
     assert (2023, 4) in months
     assert (2027, 4) in months
     assert (2021, 4) not in months
+
+
+def _trend_result():
+    taus = [f"{y}-{m:02d}-28" for y in (2024, 2025) for m in range(1, 13)]
+    parties = {}
+    for k, p in enumerate(["自由民主党", "参政党"]):
+        x = 0.5 if k == 0 else 0.03
+        parties[p] = {
+            "series": [{"tau": t, "x": x, "x_lo": x / 2, "x_hi": min(2 * x, 0.99)} for t in taus],
+            "movement": [{"tau": t, "市区町村議会": 0.1, "衆院選": 0.3 if t == "2024-10-28" else 0.0} for t in taus],
+            "national": [{"vote_date": "2024-10-27", "level": "衆院選", "y": x},
+                         {"vote_date": "2025-07-20", "level": "参院選", "y": x}],
+            "alpha": {"参院選": -0.2}, "params": {"san_load": 0.73},
+        }
+    return {"classified_until": "2025-06-30", "parties": parties}
+
+
+def test_generate_trend_charts_write_pngs(tmp_path, monkeypatch):
+    monkeypatch.setattr(diet_history, "fetch_sangiin_election_history",
+                         lambda: [Snapshot(session="a", date="2025-07-20", seats={})])
+    monkeypatch.setattr(diet_history, "fetch_shugiin_history", lambda: [])
+    r = _trend_result()
+    v = {"parties": {"参政党": [{"vote_date": "2025-07-20", "level": "参院選", "y": 0.03,
+                                "pred": 0.04, "lo": 0.02, "hi": 0.08}]}}
+    a = charts.generate_trend_chart(r, out_path=tmp_path / "a.png")
+    b = charts.generate_trend_by_party_chart(r, v, out_path=tmp_path / "b.png")
+    assert a.stat().st_size > 0 and b.stat().st_size > 0

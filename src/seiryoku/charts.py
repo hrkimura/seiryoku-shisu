@@ -9,6 +9,7 @@ data/cp_history.json・data/national_election_months.jsonから再生成でき�
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -857,5 +858,218 @@ def generate_party_matrix_chart(out_path: Path = PARTY_MATRIX_OUT_PATH) -> Path:
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+TREND_OUT_PATH = Path(__file__).resolve().parents[2] / "notes" / "images" / "trend_v2.png"
+TREND_BY_PARTY_OUT_PATH = Path(__file__).resolve().parents[2] / "notes" / "images" / "trend_v2_by_party.png"
+# 党ごとの図の並び。党勢の大きい順に読みやすく並べた編集上の選択
+TREND_PARTY_ORDER = ["自由民主党", "立憲民主党", "国民民主党", "参政党", "公明党", "日本維新の会", "日本共産党", "いのちの党"]
+
+
+def _setup_fonts():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.font_manager as fm
+    import matplotlib.pyplot as plt
+
+    font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    if Path(font_path).exists():
+        fm.fontManager.addfont(font_path)
+        plt.rcParams["font.family"] = "Noto Sans CJK JP"
+    plt.rcParams["axes.unicode_minus"] = False
+    return plt
+
+
+def _party_colors(plt, parties: list[str]) -> dict:
+    """図1と同じ政党に同じ色を当てる。"""
+    order = list(PARTY_ORDER) + [p for p in parties if p not in PARTY_ORDER]
+    return dict(zip(order, plt.cm.tab10(np.linspace(0, 1, max(10, len(order))))))
+
+
+def _spread_labels(ys: list[float], gap: float) -> list[float]:
+    """右端のラベルの縦位置を、元の順序を保ったまま最小間隔gapまで押し広げる。"""
+    order = sorted(range(len(ys)), key=lambda i: ys[i])
+    out = list(ys)
+    for k in range(1, len(order)):
+        a, b = order[k - 1], order[k]
+        out[b] = max(out[b], out[a] + gap)
+    return out
+
+
+def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
+    """党勢指数v2の図。1段目は全政党の党勢の推移、2段目は党勢の推定値の動き(|Δz|の合計)の
+    選挙の種類ごとの内訳、最下段は首相の在任期間。resultはstate_space_glmの出力。
+    1段目はその月までのデータだけによる値(x_f)で描く。平滑化の値は大きな国政選挙の跳びを
+    前の月に割り振るので、選挙の前から党勢が動いていたように見えてしまう。"""
+    from datetime import date as _date
+
+    plt = _setup_fonts()
+    parties = [p for p in PARTY_ORDER if p in result["parties"]] + \
+        [p for p in result["parties"] if p not in PARTY_ORDER]
+    colors = _party_colors(plt, parties)
+    months = sorted({r["tau"] for p in parties for r in result["parties"][p]["series"]})
+    y0, m0 = int(months[0][:4]), int(months[0][5:7])
+    n_months = len(months)
+    pos = {t: i for i, t in enumerate(months)}
+
+    def idx(y: int, m: int) -> int:
+        return (y - y0) * 12 + (m - m0)
+
+    events = []
+    for (y, m), label in national_elections.compute_election_events():
+        if 0 <= idx(y, m) < n_months:
+            events.append((idx(y, m), f"{y % 100}/{m} {label}"))
+    for y, m in _unified_local_election_months(y0, int(months[-1][:4])):
+        if 0 <= idx(y, m) < n_months:
+            events.append((idx(y, m), f"{y % 100}/{m} 統一地方選"))
+    events.sort()
+    cut = result.get("classified_until")
+    cut_idx = None
+    if cut:
+        d = _date.fromisoformat(cut)
+        cut_idx = idx(d.year, d.month) + 0.5
+
+    fig, (ax1, ax2, ax3) = plt.subplots(
+        3, 1, figsize=(19, 14), dpi=200, sharex=True,
+        gridspec_kw={"height_ratios": [8, 2.6, 0.9], "hspace": 0.06},
+    )
+    ends, ymax_by_party = {}, {}
+    for party in parties:
+        # 最初の衆院選までは衆院の尺度に合わせる手がかりがなく、その時点の値は事前分布と
+        # 参院選からの換算のずれに左右されるので描かない
+        shu = [n["vote_date"] for n in result["parties"][party].get("national", []) if n["level"] == "衆院選"]
+        s = [r for r in result["parties"][party]["series"] if not shu or r["tau"] >= min(shu)]
+        if not s:
+            continue
+        xs = [pos[r["tau"]] for r in s]
+        ys = [r.get("x_f", r["x"]) * 100 for r in s]
+        ax1.plot(xs, ys, color=colors[party], linewidth=2.4, zorder=3)
+        ends[party] = ys[-1]
+        ymax_by_party[party] = max(ys)
+    drawn = [p for p in parties if p in ends]
+    ymax = max(ymax_by_party[p] for p in drawn)
+    # 選挙のラベルを線に重ねないよう、上に余白を取ってそこに置く
+    ax1.set_ylim(0, ymax * 1.3)
+    label_y = _spread_labels([ends[p] for p in drawn], gap=ymax * 0.045)
+    for party, ly in zip(drawn, label_y):
+        ax1.plot([n_months - 1, n_months - 1 + n_months * 0.012], [ends[party], ly],
+                 color=colors[party], linewidth=1.0, zorder=3)
+        ax1.text(n_months - 1 + n_months * 0.015, ly, party, fontsize=14, color=colors[party],
+                 va="center", ha="left", weight="bold")
+    for i, label in events:
+        ax1.axvline(i, color="#999999", linewidth=0.8, linestyle="--", zorder=1)
+        ax1.text(i, ymax * 1.29, label, fontsize=11, rotation=90, ha="left", va="top", color="#333333")
+    if cut_idx is not None and cut_idx < n_months - 1:
+        for ax in (ax1, ax2):
+            ax.axvspan(cut_idx, n_months - 1, color="#f2c14e", alpha=0.22, zorder=0)
+        ax1.text(cut_idx, ymax * 0.62, " 市区町村長選は\n 未反映 ", fontsize=13, ha="left", va="top",
+                 color="#5c4400", weight="bold",
+                 bbox=dict(boxstyle="round,pad=0.28", facecolor="#fff3cd", edgecolor="#b8860b", linewidth=1.3))
+    ax1.set_ylabel("党勢(衆院の議席率の尺度, %)", fontsize=15)
+    ax1.tick_params(axis="both", labelsize=13)
+    ax1.grid(axis="y", alpha=0.3)
+    ax1.set_xlim(0, n_months - 1 + n_months * 0.13)
+    ax1.spines[["top", "right"]].set_visible(False)
+
+    totals = np.zeros(n_months)
+    level_data = {lv: [0.0] * n_months for lv in LEVEL_ORDER}
+    for party in parties:
+        for r in result["parties"][party].get("movement", []):
+            for lv in LEVEL_ORDER:
+                level_data[lv][pos[r["tau"]]] += r.get(lv, 0.0)
+    for lv in LEVEL_ORDER:
+        totals += np.array(level_data[lv])
+    for lv in LEVEL_ORDER:
+        level_data[lv] = [v / t * 100 if t > 0 else 0.0 for v, t in zip(level_data[lv], totals)]
+    ax2.stackplot(range(n_months), [level_data[lv] for lv in LEVEL_ORDER], colors=LEVEL_COLORS, alpha=0.85, zorder=2)
+    for i, _ in events:
+        ax2.axvline(i, color="#555555", linewidth=0.8, linestyle="--", zorder=5)
+    ax2.set_ylim(0, 100)
+    ax2.set_yticks([0, 25, 50, 75, 100])
+    ax2.set_ylabel("動きの内訳 (%)", fontsize=15)
+    ax2.tick_params(axis="both", labelsize=13)
+    ax2.spines[["top", "right"]].set_visible(False)
+
+    for k, (y, m, name) in enumerate(PM_PERIODS):
+        lo = max(idx(y, m), 0)
+        hi = idx(*PM_PERIODS[k + 1][:2]) if k + 1 < len(PM_PERIODS) else n_months - 1
+        hi = min(hi, n_months - 1)
+        if hi <= 0:
+            continue
+        ax3.axvspan(lo, hi, color=PM_COLORS[k], alpha=0.55, zorder=1)
+        ax3.text((lo + hi) / 2, 0.5, name, ha="center", va="center", fontsize=14, color="white", weight="bold")
+    for i, _ in events:
+        ax3.axvline(i, color="#333333", linewidth=0.8, linestyle="--", zorder=4)
+    ax3.set_ylim(0, 1)
+    ax3.set_yticks([])
+    for spine in ["top", "right", "left"]:
+        ax3.spines[spine].set_visible(False)
+    ticks = list(range(0, n_months, 12))
+    if n_months - 1 - ticks[-1] >= 10:
+        ticks.append(n_months - 1)
+    ax3.set_xticks(ticks)
+    ax3.set_xticklabels([months[i][:7].replace("-", "/") for i in ticks], fontsize=13, rotation=30, ha="right")
+
+    fig.tight_layout(rect=[0.0, 0.02, 0.99, 1])
+    _draw_stack_labels(ax2, LEVEL_ORDER, LEVEL_DISPLAY_NAMES, level_data)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def generate_trend_by_party_chart(result: dict, validation: dict | None = None,
+                                  out_path: Path = TREND_BY_PARTY_OUT_PATH) -> Path:
+    """党勢指数v2の政党別の図(横一列)。帯は±2標準偏差、点は国政選挙の結果(参院選は衆院の
+    尺度に換算)、×は国政選挙を1回ずつ除いて補間した値。validationは補間の検証の出力。"""
+    from datetime import date as _date
+    import matplotlib.dates as mdates
+
+    plt = _setup_fonts()
+    parties = [p for p in TREND_PARTY_ORDER if p in result["parties"]]
+    fig, axes = plt.subplots(1, len(parties), figsize=(3.75 * len(parties), 5.5), sharex=True, sharey=True)
+
+    def logit(v: float) -> float:
+        v = min(max(v, 1e-4), 1 - 1e-4)
+        return math.log(v / (1 - v))
+
+    for ax, party in zip(np.atleast_1d(axes), parties):
+        r = result["parties"][party]
+        a_san, load = r["alpha"].get("参院選"), r["params"]["san_load"]
+
+        def to_x(v: float, level: str) -> float:
+            if level != "参院選" or a_san is None:
+                return v
+            return 1 / (1 + math.exp(-(logit(v) - a_san) / load))
+
+        ds = [_date.fromisoformat(s["tau"]) for s in r["series"]]
+        ax.fill_between(ds, [s["x_lo"] for s in r["series"]], [s["x_hi"] for s in r["series"]],
+                        color="C0", alpha=0.2, lw=0)
+        ax.plot(ds, [s["x"] for s in r["series"]], color="C0", lw=1.5)
+        for n in r.get("national", []):
+            shu = n["level"] != "参院選"
+            ax.plot(_date.fromisoformat(n["vote_date"]), to_x(n["y"], n["level"]), "o" if shu else "s", ms=6,
+                    mfc="k" if shu else "w", mec="k", zorder=5)
+        for h in (validation or {}).get("parties", {}).get(party, []):
+            d = _date.fromisoformat(h["vote_date"])
+            yp, lo, hi = (to_x(h[k], h["level"]) for k in ("pred", "lo", "hi"))
+            ax.errorbar(d, yp, yerr=[[yp - lo], [hi - yp]], fmt="x", color="C3", ms=7, capsize=3, zorder=4)
+        ax.set_title(party, fontsize=13)
+        ax.set_ylim(0, 0.85)
+        ax.grid(alpha=0.3)
+        ax.xaxis.set_major_locator(mdates.YearLocator(2))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    handles = [plt.Line2D([], [], color="C0", lw=1.5), plt.Line2D([], [], ls="", marker="o", color="k"),
+               plt.Line2D([], [], ls="", marker="s", mfc="w", mec="k")]
+    labels = ["推定した党勢(帯は±2標準偏差)", "衆院選の議席率", "参院選(衆院の尺度に換算)"]
+    if validation:
+        handles.append(plt.Line2D([], [], ls="", marker="x", color="C3"))
+        labels.append("その選挙を除いて補間した値(±2標準偏差)")
+    fig.legend(handles, labels, loc="lower center", ncol=len(labels), fontsize=12)
+    fig.tight_layout(rect=(0, 0.09, 1, 1))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=130, facecolor="white")
     plt.close(fig)
     return out_path
