@@ -32,6 +32,8 @@ LEVEL_COLORS = ["#c0392b", "#e67e22", "#8e44ad", "#2980b9", "#27ae60", "#7f8c8d"
 # LEVEL_ORDERはlevel_weight_shareの実データキー(monthly_index.py参照)と一致させる
 # 必要があるため変更できない。表示名だけをここで日本語として正式な言い方に直す。
 LEVEL_DISPLAY_NAMES = {"衆院選": "衆議院", "参院選": "参議院"}
+# 党勢指数v2の動きの内訳の色。v2では市区町村議会が大半を占めるので、v1の灰色だと背景に見える
+TREND_LEVEL_COLORS = {"衆院選": "#c0392b", "参院選": "#e67e22", "都道府県議会": "#2980b9", "市区町村議会": "#27ae60"}
 
 # 首相の在任期間(発足月)。出典: 首相官邸・各内閣公式発表。更新頻度が低いため
 # 定数として持ち、首相交代のたびに手動で追記する。
@@ -968,11 +970,17 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     for lv in LEVEL_ORDER:
         totals += np.array(level_data[lv])
     levels = [lv for lv in LEVEL_ORDER if any(level_data[lv])]
-    level_colors = [c for lv, c in zip(LEVEL_ORDER, LEVEL_COLORS) if lv in levels]
+    level_colors = [TREND_LEVEL_COLORS.get(lv, c) for lv, c in zip(LEVEL_ORDER, LEVEL_COLORS) if lv in levels]
     level_data = {lv: [v / t * 100 if t > 0 else 0.0 for v, t in zip(level_data[lv], totals)] for lv in levels}
     # 選挙のない月は空白のまま見せるため、隣の月と斜めにつながない段で描く
     ax2.stackplot(range(n_months), [level_data[lv] for lv in levels], colors=level_colors, alpha=0.85, zorder=2,
-                  step="mid")
+                  step="mid", labels=[LEVEL_DISPLAY_NAMES.get(lv, lv) for lv in levels])
+    # 帯の大半が細い棒なので、帯の中に名前を置くと隣の棒を指して見える。右の余白に凡例として置く
+    handles, labels = ax2.get_legend_handles_labels()
+    # 凡例の左端を1段目の政党名の書き出しにそろえる
+    ax2.legend(handles[::-1], labels[::-1], loc="center left", fontsize=13, frameon=False, handlelength=1.4,
+               borderpad=0, borderaxespad=0,
+               bbox_to_anchor=(n_months - 1 + n_months * 0.015, 50), bbox_transform=ax2.transData)
     for i, _ in events:
         ax2.axvline(i, color="#555555", linewidth=0.8, linestyle="--", zorder=5)
     ax2.set_ylim(0, 100)
@@ -1002,7 +1010,6 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     ax3.set_xticklabels([months[i][:7].replace("-", "/") for i in ticks], fontsize=13, rotation=30, ha="right")
 
     fig.tight_layout(rect=[0.0, 0.02, 0.99, 1])
-    _draw_stack_labels(ax2, levels, LEVEL_DISPLAY_NAMES, level_data)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, facecolor="white", bbox_inches="tight")
     plt.close(fig)
