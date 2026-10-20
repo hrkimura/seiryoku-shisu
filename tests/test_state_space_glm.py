@@ -38,7 +38,7 @@ def test_laplace_pseudo_observation_reproduces_the_posterior_mode():
 
 
 def _simulate(jump=None, n_days=6 * 365, seed=0, k_sv=2.0, alpha=-0.5, phi=30.0):
-    """真の党勢x(t)の世界で、議会は議席数をベータ二項分布、首長はベルヌーイ分布、
+    """真の党勢x(t)の世界で、議会は議席数をベータ二項分布、
     国政選挙はxをそのまま観測する。"""
     rng = np.random.default_rng(seed)
     events = []
@@ -46,13 +46,11 @@ def _simulate(jump=None, n_days=6 * 365, seed=0, k_sv=2.0, alpha=-0.5, phi=30.0)
         day = START + timedelta(days=d)
         x = 0.3 + (jump[1] if jump and day >= jump[0] else 0.0)
         mu = 1 / (1 + math.exp(-(math.log(x / (1 - x)) / k_sv + alpha)))
-        # 実データの月あたり件数(議会・首長とも30〜40件)に近づける
+        # 実データの議会選挙の月あたり件数(30〜40件)に近づける
         for _ in range(8):
             n = int(rng.integers(5, 30))
             k = rng.binomial(n, rng.beta(mu * phi, (1 - mu) * phi))
             events.append(Event(day, "市区町村議会", 1e5, float(n), {"A": k / n, "B": 1 - k / n}, ""))
-            won = rng.random() < mu
-            events.append(Event(day, "市区町村長", 1e5, 1.0, {"A": 1.0} if won else {"B": 1.0}, ""))
         if d // 365 != (d - 7) // 365:
             seats = round(x * 465)
             events.append(Event(day, "衆院選", 1.2e8, 465.0, {"A": seats / 465, "B": 1 - seats / 465}, ""))
@@ -66,10 +64,10 @@ def test_recovers_level_and_tracks_a_jump_between_national_elections():
     params, _ = glm.fit_params(obs, ell=0.5, jumps=True, maxiter=60, starts=1, phi_mode="level")
     tau = START + timedelta(days=5 * 365 - 7)
     nc = glm.nowcast(obs, params, tau)
-    assert nc.x == pytest.approx(0.45, abs=0.04)
+    # 観測が議会選挙だけなので、跳びから300日後でも事後標準偏差は占有率で0.035ほどある
+    assert nc.x > 0.375
     assert nc.x_lo < 0.45 < nc.x_hi
     assert params.phi["市区町村議会"] == pytest.approx(30.0, rel=0.5)
-    assert "市区町村長" not in params.phi
 
 
 def test_phi_modes_set_the_number_of_dispersion_parameters():
@@ -173,7 +171,6 @@ def test_pooled_fit_interpolates_the_summed_profile_and_widens_the_grid(monkeypa
 def test_municipality_effects_are_placed_only_on_councils_and_q_can_be_fixed():
     events = _simulate(n_days=2 * 365, seed=3)
     obs = glm.glm_observations(events, "A", START)
-    assert "市区町村長" in obs.level
     p, _ = glm.fit_params(obs, ell=0.5, muni=True, maxiter=30, q_x=0.03)
     assert set(p.tau2) == {"市区町村議会"} and p.q_x == pytest.approx(0.03)
 
@@ -189,6 +186,20 @@ def test_interpolation_check_holds_out_each_national_election_after_the_first():
     assert all(r["lo"] <= r["pred"] <= r["hi"] and r["q"] > 0 for r in res["A"])
     s = glm.interpolation_summary(res)
     assert s["n"] == len(nat) - 1 and 0 <= s["coverage"] <= 1
+
+
+def test_interpolation_check_can_drop_a_local_level():
+    events = _simulate(n_days=4 * 365, seed=5)
+    events += [Event(e.vote_date, "都道府県議会", e.P, 40.0, e.shares, "")
+               for e in events if e.level == "市区町村議会"][::4]
+    obs = {"A": glm.glm_observations(events, "A", START)}
+    nat = sorted({e.vote_date for e in events if e.level == "衆院選"})
+    shu = [p for d in nat for p in _pts(2.0, 1.0, (d,))]
+    san = _pts(1.5, 0.6, (date(2019, 7, 21), date(2022, 7, 10)))
+    full = glm.national_interpolation_check(obs, shu, san, workers=1)
+    dropped = glm.national_interpolation_check(obs, shu, san, workers=1, drop_levels=frozenset({"都道府県議会"}))
+    assert [r["vote_date"] for r in dropped["A"]] == [r["vote_date"] for r in full["A"]]
+    assert [r["pred"] for r in dropped["A"]] != [r["pred"] for r in full["A"]]
 
 
 def test_level_movement_sums_the_absolute_updates_by_month_and_level():
@@ -254,7 +265,7 @@ def test_smoother_bridges_two_national_elections_like_a_brownian_bridge():
 def test_monthly_contributions_add_up_to_the_change_of_the_estimate():
     events = _simulate(n_days=2 * 365, seed=3)
     obs = glm.glm_observations(events, "A", START)
-    params = glm.GlmParams(q_x=0.05, phi={"市区町村議会": 30.0, "市区町村長": 1e8}, ell=0.5,
+    params = glm.GlmParams(q_x=0.05, phi={"市区町村議会": 30.0}, ell=0.5,
                            tau2={"市区町村議会": 0.3})
     a, b = date(2019, 3, 31), date(2019, 4, 30)
     parts = glm.monthly_contributions(obs, params, a, b)
@@ -332,30 +343,11 @@ def test_filter_with_municipality_effects_matches_the_exact_filter():
     assert r.cov[0, 0] == pytest.approx(C[0, 0], rel=0.1)
 
 
-def test_coalition_mayors_are_reallocated_in_proportion_to_the_win_probability():
-    """強い党と弱い党の相乗りの首長選では、等分の取り分が当選確率に比例して強い党に寄り、
-    組の合計は変わらない。単独推薦の首長選と議会選挙はそのまま。"""
-    d0 = date(2019, 1, 1)
-    events = []
-    for j in range(40):
-        d = d0 + timedelta(days=20 * j)
-        events.append(Event(d, "市区町村議会", 1.0, 20.0, {"A": 0.6, "B": 0.1}, f"m{j}"))
-        events.append(Event(d, "市区町村長", 1.0, 1.0, {"A": 1.0} if j % 2 else {"B": 1.0} if j % 5 == 0 else {}, f"m{j}"))
-    coal = Event(d0 + timedelta(days=900), "市区町村長", 1.0, 1.0, {"A": 0.5, "B": 0.5}, "x")
-    events.append(coal)
-    obs = {p: glm.glm_observations(events, p, d0, filter_levels=False) for p in "AB"}
-    params = {p: glm.GlmParams(q_x=0.01, phi={"市区町村議会": 30.0, "市区町村長": 1e8}, ell=1.0) for p in "AB"}
-    out = glm.coalition_weighted(obs, params)
-    ia, ib = len(obs["A"].t) - 1, len(obs["B"].t) - 1
-    assert out["A"].y[ia] + out["B"].y[ib] == pytest.approx(1.0)
-    assert out["A"].y[ia] > 0.7
-    np.testing.assert_allclose(out["A"].y[:ia], obs["A"].y[:ia])
-    np.testing.assert_allclose(out["A"].k, out["A"].y * out["A"].n)
-
-
-def test_mayors_before_the_endorsement_list_are_not_observed():
+def test_mayors_and_governors_are_not_observed():
     d = date(2026, 1, 10)
     events = [Event(d, "市区町村議会", 1.0, 10.0, {"A": 0.3}, "m"),
+              Event(d, "市区町村長", 1.0, 1.0, {"A": 1.0}, "m"),
+              Event(d, "都道府県知事", 1.0, 1.0, {"A": 1.0}, "p"),
               Event(d + timedelta(days=1), UNCLASSIFIED_MAYOR, 1.0, 1.0, {"A": 1.0}, "m")]
     obs = glm.glm_observations(events, "A", d, filter_levels=False)
     assert obs.level == ["市区町村議会"]

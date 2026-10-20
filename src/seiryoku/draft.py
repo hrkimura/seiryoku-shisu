@@ -268,8 +268,6 @@ def _format_trend(t: dict) -> list[str]:
         for c in t["impacts"]:
             lines.append(f"  - {c['party']} {c['vote_date']} {c['name']}({c['level']}、{c['n']:.0f}議席): "
                          f"見込み {c['expected'] * 100:.1f}% / 実際 {c['actual'] * 100:.1f}%、党勢 {c['dx'] * 100:+.2f}")
-    if t.get("classified_until"):
-        lines.append(f"注: {t['classified_until']}より後の市区町村長選は推薦・支持のデータが未公開のため入っていない。")
     return lines
 
 

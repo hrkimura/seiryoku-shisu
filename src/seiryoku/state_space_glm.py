@@ -2,9 +2,9 @@
 
 状態は$z=\\operatorname{logit}x$と階層ごとの水準差$\\alpha_\\ell$。
 国政選挙は$z$をほぼ正確に観測し、参院選は衆参の議席と得票の曲線を得票率でつないだ
-負荷と水準差の事前分布で観測する。地方選挙は、無所属を除いた議席$n^*$のうち政党の
-議席$k$を、平均$\\mu=\\operatorname{logit}^{-1}(\\gamma z+\\alpha_\\ell+u_m)$、
-精度$\\phi_\\ell$のベータ二項分布で観測する($n^*=1$の首長ではベルヌーイ分布)。
+負荷と水準差の事前分布で観測する。地方選挙は議会選挙だけを使い、無所属を除いた議席$n^*$の
+うち政党の議席$k$を、平均$\\mu=\\operatorname{logit}^{-1}(\\gamma z+\\alpha_\\ell+u_m)$、
+精度$\\phi_\\ell$のベータ二項分布で観測する。
 $u_m$は自治体ごとの固有の水準、$\\gamma$(コードではell)は政党ごとの負荷で、議席と得票の
 曲線と地方の占有率から決める(party_loading)。
 非正規の観測は、観測ごとに1次元のラプラス近似で正規分布に直して更新する。
@@ -23,14 +23,13 @@ from scipy.optimize import minimize
 from scipy.special import betaln, psi, zeta
 
 from . import state_space as ss
-from .trend import UNCLASSIFIED_MAYOR, Event, first_appearance
+from .trend import Event, first_appearance
 
 PRIOR_VAR_Z = 10.0
 PRIOR_VAR_ALPHA = 10.0
 PRIOR_VAR_SLOPE = 0.01
 SANGIIN = "参院選"
 MAYOR_LEVELS = ("市区町村長", "都道府県知事")
-# 地盤u_mを置く階層。首長選に置いても国政選挙の補間は変わらない
 COUNCIL_LEVELS = ("市区町村議会", "都道府県議会")
 
 
@@ -58,11 +57,12 @@ class GlmObservations:
 
 
 def glm_observations(events: list[Event], party: str, start: date, filter_levels: bool = True) -> GlmObservations:
-    """正規分布のモデルと同じ選挙を議席数(k, n*)に直す。filter_levels=Falseなら、
+    """国政選挙と議会選挙を議席数(k, n*)に直す。filter_levels=Falseなら、
     政党がほとんど議席を得ない階層も含める。
-    推薦・支持の名簿が出る前の市区町村長選は使わない。名簿が出るまでは公認候補が勝った選挙
-    しか政党の議席を持たず、結果で選別された観測になるからである。"""
-    events = [e for e in events if e.level != UNCLASSIFIED_MAYOR]
+    首長選は使わない。党派は推薦・支持の名簿から取るしかなく、名簿の公開は1年以上遅れ、
+    その時期も自治体の系統ごとにばらばらだからである。国政選挙の補間の精度は、首長選を
+    除いても落ちない。"""
+    events = [e for e in events if e.level in ss.NATIONAL_LEVELS or e.level in COUNCIL_LEVELS]
     obs = ss.party_observations(events, party, start, filter_levels=filter_levels)
     return GlmObservations(t=obs.t, level=obs.level, k=obs.y * obs.n_eff, n=obs.n_eff,
                            y=obs.y, events=obs.events)
@@ -489,13 +489,17 @@ def _subset(obs: GlmObservations, keep: np.ndarray) -> GlmObservations:
 
 
 def national_interpolation_check(obs_by_party: dict[str, GlmObservations], seat_vote: list, seat_vote_san: list,
-                                 workers: int | None = None, local: bool = True) -> dict[str, list[dict]]:
+                                 workers: int | None = None, local: bool = True,
+                                 drop_levels: frozenset[str] = frozenset()) -> dict[str, list[dict]]:
     """国政選挙を1回ずつ除き、残りの全期間のデータ(前後両側)で平滑化してその結果を再現できるかを見る。
     除いた選挙の議席と得票の点は、負荷、参院選のつなぎ、全党共通のqの計算からも除く。qは、
     その選挙を除く対象になる政党(その選挙が最初の国政選挙でない政党)の対数尤度の合計で決める。
-    local=Falseなら地方選挙を使わない(国政選挙だけの補間)。"""
+    local=Falseなら地方選挙を使わない(国政選挙だけの補間)。drop_levelsの階層の選挙も使わず、
+    負荷の地方の占有率も残りの議会から求める。"""
     from concurrent.futures import ProcessPoolExecutor
 
+    obs_by_party = {p: _subset(o, np.array([lv not in drop_levels for lv in o.level]))
+                    for p, o in obs_by_party.items()}
     national = {p: np.array([lv in ss.NATIONAL_LEVELS for lv in o.level]) for p, o in obs_by_party.items()}
     held = {p: {o.events[i].vote_date: i for i in np.flatnonzero(national[p])[1:]} for p, o in obs_by_party.items()}
     results: dict[str, list[dict]] = {p: [] for p in obs_by_party}
@@ -586,36 +590,6 @@ def level_movement(obs: GlmObservations, params: GlmParams, ends: list[date]) ->
         if j < len(ends):
             lv = obs.level[i]
             out[j][lv] = out[j].get(lv, 0.0) + abs(dz)
-    return out
-
-
-def coalition_weighted(obs_by_party: dict[str, GlmObservations],
-                       params_by_party: dict[str, GlmParams]) -> dict[str, GlmObservations]:
-    """相乗りの首長選で、組に入った政党の取り分(元のデータでは等分)の合計を、各党のフィルタが
-    その選挙の直前に出す当選確率$\\mu_p$に比例して割り振り直す。params_by_partyにない政党の
-    取り分は動かさない。"""
-    mu: dict[tuple[int, str], float] = {}
-    for p, params in params_by_party.items():
-        o = obs_by_party[p]
-        c: list = []
-        run_filter(o, params, contrib=c)
-        for i, expected, _ in c:
-            if o.level[i] in MAYOR_LEVELS:
-                mu[(id(o.events[i]), p)] = expected
-    pos = {p: {id(e): j for j, e in enumerate(o.events)} for p, o in obs_by_party.items()}
-    out = {}
-    for p, o in obs_by_party.items():
-        y = o.y.copy()
-        for i in range(len(y)):
-            e = o.events[i]
-            if o.level[i] not in MAYOR_LEVELS or (id(e), p) not in mu:
-                continue
-            group = [q for q in params_by_party if (id(e), q) in mu and e.shares.get(q, 0.0) > 0]
-            if p not in group or len(group) < 2:
-                continue
-            total = sum(obs_by_party[q].y[pos[q][id(e)]] for q in group)
-            y[i] = total * mu[(id(e), p)] / sum(mu[(id(e), q)] for q in group)
-        out[p] = GlmObservations(t=o.t, level=o.level, k=y * o.n, n=o.n, y=y, events=o.events)
     return out
 
 
@@ -751,19 +725,16 @@ def pooled_fit(ex, obs_by_party: dict[str, GlmObservations], ells: dict[str, flo
 
 def estimate_all(obs_by_party: dict[str, GlmObservations], ells: dict[str, float], fit_kw: dict[str, dict],
                  workers: int | None = None, national_dev: bool = False) -> tuple[dict, dict]:
-    """全党のパラメータを推定する。1段目は相乗りを等分したデータで推定し、その当選確率で
-    割り振り直したデータで推定し直す。どちらの段でも、ランダムウォークの分散は全党共通の値を
-    pooled_fitで決める。fit_kwは政党ごとのfit_paramsの引数(参院のつなぎが政党ごとに違う)。"""
+    """全党のパラメータを推定する。ランダムウォークの分散は全党共通の値をpooled_fitで決める。
+    fit_kwは政党ごとのfit_paramsの引数(参院のつなぎが政党ごとに違う)。"""
     from concurrent.futures import ProcessPoolExecutor
 
     parties = list(ells)
     with ProcessPoolExecutor(workers) as ex:
-        _, first_fit = pooled_fit(ex, obs_by_party, ells, fit_kw)
-        weighted = coalition_weighted(obs_by_party, first_fit)
-        q, params = pooled_fit(ex, weighted, ells, fit_kw)
+        q, params = pooled_fit(ex, obs_by_party, ells, fit_kw)
         dev = {}
         if national_dev:
-            dev = dict(zip(parties, ex.map(_fit_one, [(weighted[p], ells[p],
+            dev = dict(zip(parties, ex.map(_fit_one, [(obs_by_party[p], ells[p],
                                                        {**fit_kw[p], "national_dev": True, "q_x": q})
                                                       for p in parties])))
     return params, dev
@@ -784,8 +755,7 @@ def month_facts(result: dict, top: int = 10) -> dict:
             # 占有率の尺度での動きは、dzが小さければx(1-x)dzで近似できる
             impacts.append({"party": p, **c, "dx": x * (1 - x) * c["dz"]})
     impacts.sort(key=lambda c: -abs(c["dx"]))
-    return {"tau": result["tau"], "classified_until": result.get("classified_until"),
-            "parties": parties, "impacts": impacts[:top]}
+    return {"tau": result["tau"], "parties": parties, "impacts": impacts[:top]}
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -798,7 +768,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--national-dev", action="store_true",
                     help="--refitと併せて、診断用の国政だけの成分z_Nのパラメータも推定する")
     ap.add_argument("--validate", action="store_true",
-                    help="国政選挙を1回ずつ除いた補間の検証も行い、結果を別のファイルに書く(数時間かかる)")
+                    help="国政選挙を1回ずつ除いた補間の検証も行い、結果を別のファイルに書く(8コアで30分ほどかかる)")
     ap.add_argument("--workers", type=int, default=None)
     args = ap.parse_args(argv)
     run(refit=args.refit, national_dev=args.national_dev, validate=args.validate, workers=args.workers)
@@ -811,7 +781,7 @@ def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
     推定し直した理由(refit_reason、推定し直さなければNone)。"""
     from .trend import OUTPUT_DIR, load_events, month_ends
 
-    events, cutoff = load_events()
+    events, _ = load_events()
     first = first_appearance(events)
     last = events[-1].vote_date
     tau = month_ends((last.year, last.month), (last.year, last.month))[-1]
@@ -841,10 +811,8 @@ def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
         print(PARAMS_PATH, flush=True)
     else:
         params_by_party, meta, dev_by_party = load_params(PARAMS_PATH)
-    # 相乗りの割り振りは、保存したパラメータのフィルタの当選確率で毎回やり直す
-    obs_by_party = coalition_weighted({p: obs_by_party[p] for p in params_by_party}, params_by_party)
-    out = {"tau": tau.isoformat(), "classified_until": cutoff.isoformat() if cutoff else None,
-           "params_estimated_at": meta["estimated_at"], "parties": {}}
+    obs_by_party = {p: obs_by_party[p] for p in params_by_party}
+    out = {"tau": tau.isoformat(), "params_estimated_at": meta["estimated_at"], "parties": {}}
     prev = month_ends((tau.year, tau.month), (tau.year, tau.month))[0].replace(day=1) - timedelta(days=1)
     for party, params in params_by_party.items():
         obs = obs_by_party[party]

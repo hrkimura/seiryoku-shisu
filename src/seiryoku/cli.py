@@ -261,7 +261,7 @@ def _print_trend_summary(t: dict) -> None:
         print(f"  {party}: {r['x'] * 100:.1f}%(前月差 {ch})")
     if t["refit_reason"]:
         print(f"  [要対応] パラメータを推定し直しました({t['refit_reason']})。補間の検証は自動では回さないので、"
-              "PYTHONPATH=src python -m seiryoku.state_space_glm --validate --workers 8 を実行してください(数時間)。")
+              "PYTHONPATH=src python -m seiryoku.state_space_glm --validate --workers 8 を実行してください(30分ほど)。")
 
 
 def main() -> None:

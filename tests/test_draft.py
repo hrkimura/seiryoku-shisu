@@ -310,7 +310,7 @@ def test_format_support_warns_when_fetch_failed():
 
 
 def test_trend_section_lists_parties_by_change_and_the_impacts():
-    t = {"tau": "2026-09-30", "classified_until": "2025-12-22", "refit_reason": None,
+    t = {"tau": "2026-09-30", "refit_reason": None,
          "parties": {"A": {"x": 0.5, "x_lo": 0.4, "x_hi": 0.6, "change": 0.01},
                      "B": {"x": 0.1, "x_lo": 0.05, "x_hi": 0.2, "change": -0.03}},
          "impacts": [{"party": "B", "vote_date": "2026-09-06", "name": "x市", "level": "市区町村議会",
@@ -318,5 +318,5 @@ def test_trend_section_lists_parties_by_change_and_the_impacts():
     lines = draft._format_trend(t)
     body = "\n".join(lines)
     assert body.index("  - B:") < body.index("  - A:")
-    assert "見込み 20.0% / 実際 0.0%" in body and "2025-12-22" in body
+    assert "見込み 20.0% / 実際 0.0%" in body
     assert draft._format_trend({"error": "x"})[0].startswith("警告")

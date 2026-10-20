@@ -903,8 +903,6 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     選挙の種類ごとの内訳、最下段は首相の在任期間。resultはstate_space_glmの出力。
     1段目はその月までのデータだけによる値(x_f)で描く。平滑化の値は大きな国政選挙の跳びを
     前の月に割り振るので、選挙の前から党勢が動いていたように見えてしまう。"""
-    from datetime import date as _date
-
     plt = _setup_fonts()
     parties = [p for p in PARTY_ORDER if p in result["parties"]] + \
         [p for p in result["parties"] if p not in PARTY_ORDER]
@@ -925,12 +923,6 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
         if 0 <= idx(y, m) < n_months:
             events.append((idx(y, m), f"{y % 100}/{m} 統一地方選"))
     events.sort()
-    cut = result.get("classified_until")
-    cut_idx = None
-    if cut:
-        d = _date.fromisoformat(cut)
-        cut_idx = idx(d.year, d.month) + 0.5
-
     fig, (ax1, ax2, ax3) = plt.subplots(
         3, 1, figsize=(19, 14), dpi=200, sharex=True,
         gridspec_kw={"height_ratios": [8, 2.6, 0.9], "hspace": 0.06},
@@ -961,12 +953,6 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     for i, label in events:
         ax1.axvline(i, color="#999999", linewidth=0.8, linestyle="--", zorder=1)
         ax1.text(i, ymax * 1.29, label, fontsize=11, rotation=90, ha="left", va="top", color="#333333")
-    if cut_idx is not None and cut_idx < n_months - 1:
-        for ax in (ax1, ax2):
-            ax.axvspan(cut_idx, n_months - 1, color="#f2c14e", alpha=0.22, zorder=0)
-        ax1.text(cut_idx, ymax * 0.62, " 市区町村長選は\n 未反映 ", fontsize=13, ha="left", va="top",
-                 color="#5c4400", weight="bold",
-                 bbox=dict(boxstyle="round,pad=0.28", facecolor="#fff3cd", edgecolor="#b8860b", linewidth=1.3))
     ax1.set_ylabel("党勢(衆院の議席率の尺度, %)", fontsize=15)
     ax1.tick_params(axis="both", labelsize=13)
     ax1.grid(axis="y", alpha=0.3)
@@ -981,9 +967,12 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
                 level_data[lv][pos[r["tau"]]] += r.get(lv, 0.0)
     for lv in LEVEL_ORDER:
         totals += np.array(level_data[lv])
-    for lv in LEVEL_ORDER:
-        level_data[lv] = [v / t * 100 if t > 0 else 0.0 for v, t in zip(level_data[lv], totals)]
-    ax2.stackplot(range(n_months), [level_data[lv] for lv in LEVEL_ORDER], colors=LEVEL_COLORS, alpha=0.85, zorder=2)
+    levels = [lv for lv in LEVEL_ORDER if any(level_data[lv])]
+    level_colors = [c for lv, c in zip(LEVEL_ORDER, LEVEL_COLORS) if lv in levels]
+    level_data = {lv: [v / t * 100 if t > 0 else 0.0 for v, t in zip(level_data[lv], totals)] for lv in levels}
+    # 選挙のない月は空白のまま見せるため、隣の月と斜めにつながない段で描く
+    ax2.stackplot(range(n_months), [level_data[lv] for lv in levels], colors=level_colors, alpha=0.85, zorder=2,
+                  step="mid")
     for i, _ in events:
         ax2.axvline(i, color="#555555", linewidth=0.8, linestyle="--", zorder=5)
     ax2.set_ylim(0, 100)
@@ -1013,7 +1002,7 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     ax3.set_xticklabels([months[i][:7].replace("-", "/") for i in ticks], fontsize=13, rotation=30, ha="right")
 
     fig.tight_layout(rect=[0.0, 0.02, 0.99, 1])
-    _draw_stack_labels(ax2, LEVEL_ORDER, LEVEL_DISPLAY_NAMES, level_data)
+    _draw_stack_labels(ax2, levels, LEVEL_DISPLAY_NAMES, level_data)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, facecolor="white", bbox_inches="tight")
     plt.close(fig)

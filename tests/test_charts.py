@@ -214,7 +214,7 @@ def _trend_result():
                          {"vote_date": "2025-07-20", "level": "参院選", "y": x}],
             "alpha": {"参院選": -0.2}, "params": {"san_load": 0.73},
         }
-    return {"tau": taus[-1], "classified_until": "2025-06-30", "parties": parties}
+    return {"tau": taus[-1], "parties": parties}
 
 
 def test_generate_trend_charts_write_pngs(tmp_path, monkeypatch):
