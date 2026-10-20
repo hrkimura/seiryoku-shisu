@@ -128,6 +128,25 @@ def _update_support_analysis(history: list[dict]) -> dict:
     }
 
 
+def _update_trend_v2(image_dir: Path) -> dict:
+    """党勢指数v2を計算し、図を描いて、記事の事実データに載せる節を返す。補間の検証は
+    数時間かかるので月次では回さず、図2には最新の検証の結果を使う。失敗しても月次実行は止めない。"""
+    from . import charts
+    from . import state_space_glm as glm
+
+    try:
+        res = glm.run()
+        result = res["result"]
+        validations = sorted(OUTPUT_DIR.glob("trend/state_space_glm_validation_*.json"))
+        validation = json.loads(validations[-1].read_text()) if validations else None
+        charts.generate_trend_chart(result, out_path=image_dir / "trend_v2.png")
+        charts.generate_trend_by_party_chart(result, validation, out_path=image_dir / "trend_v2_by_party.png")
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+    return {**glm.month_facts(result), "refit_reason": res["refit_reason"],
+            "validation_tau": validation["tau"] if validation else None}
+
+
 def run() -> dict:
     diet_seats = diet.fetch_diet_seats()
 
@@ -161,6 +180,7 @@ def run() -> dict:
 
     monthly = _update_monthly_pipeline()
     support = _update_support_analysis(monthly["history"])
+    trend_v2 = _update_trend_v2(Path(monthly["image_dir"]))
 
     return {
         "date": date.today().isoformat(),
@@ -188,6 +208,7 @@ def run() -> dict:
             "forecast_next_month": monthly["forecast_next_month"],
         },
         "support_analysis": support,
+        "trend_v2": trend_v2,
         "raw": {
             "diet_seats": diet_seats,
         },
@@ -227,6 +248,19 @@ def _print_support_summary(sa: dict) -> None:
         print(line)
 
 
+def _print_trend_summary(t: dict) -> None:
+    print("\n党勢指数v2:")
+    if t.get("error"):
+        print(f"  [失敗] {t['error']}")
+        return
+    for party, r in sorted(t["parties"].items(), key=lambda kv: -kv[1]["x"]):
+        ch = f"{r['change'] * 100:+.1f}" if r["change"] is not None else "—"
+        print(f"  {party}: {r['x'] * 100:.1f}%(前月差 {ch})")
+    if t["refit_reason"]:
+        print(f"  [要対応] パラメータを推定し直しました({t['refit_reason']})。補間の検証は自動では回さないので、"
+              "PYTHONPATH=src python -m seiryoku.state_space_glm --validate --workers 8 を実行してください(数時間)。")
+
+
 def main() -> None:
     result = run()
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -253,6 +287,7 @@ def main() -> None:
         print("翌月は国政選挙が絡む月ではないため方向の目安なし")
 
     _print_support_summary(result["support_analysis"])
+    _print_trend_summary(result["trend_v2"])
 
     # jichisoken(全国首長名簿)の年版更新は年1回(収録期間末の4月から9〜10か月後の1〜2月ごろ)しか起きないため
     # (design_document.tex \S2.2参照)、変化した月だけ目立たせる。
@@ -265,6 +300,7 @@ def main() -> None:
     history = cp_history.load_history()
     facts = draft_mod.build_month_facts(
         history, attribution=mi["attribution"], support=support_facts(result["support_analysis"]),
+        trend=result["trend_v2"],
     )
     if os.environ.get("ANTHROPIC_API_KEY"):
         draft_text = draft_mod.generate_monthly_draft(facts)

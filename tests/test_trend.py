@@ -175,3 +175,12 @@ def test_alliance_seats_are_returned_to_the_original_parties():
     assert a.shares["公明党"] == pytest.approx(0.098 * 28 / 49)
     assert "中道改革連合" not in a.shares and a.shares["自由民主党"] == 0.6
     assert b.shares == {"立憲民主党": 0.5, "公明党": 0.5}
+
+
+def test_parties_of_the_same_branch_are_counted_together():
+    d = date(2026, 10, 25)
+    e = trend.Event(d, "市区町村議会", 1e5, 10.0, {"立憲民主党": 0.1, "民主改革の会": 0.2, "自由民主党": 0.3}, "x市")
+    other = trend.Event(d, "市区町村議会", 1e5, 10.0, {"自由民主党": 0.5}, "y市")
+    a, b = trend.merge_branches([e, other])
+    assert a.shares == pytest.approx({"立憲民主党": 0.3, "自由民主党": 0.3})
+    assert b is other

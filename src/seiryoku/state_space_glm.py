@@ -769,10 +769,27 @@ def estimate_all(obs_by_party: dict[str, GlmObservations], ells: dict[str, float
     return params, dev
 
 
+def month_facts(result: dict, top: int = 10) -> dict:
+    """記事の事実データに載せる党勢指数v2の節。各党の最新月の値(その月までの選挙による値)と
+    前月からの変化、その月の選挙のうち党勢を占有率の尺度で大きく動かしたもの。dzの党ごとの和は、
+    最新月のxのlogitの前月からの変化にちょうど等しい。"""
+    parties, impacts = {}, []
+    for p, r in result["parties"].items():
+        s = r["series"]
+        cur, prev = s[-1], (s[-2] if len(s) > 1 else None)
+        x = cur.get("x_f", cur["x"])
+        parties[p] = {"x": x, "x_lo": cur.get("x_f_lo", cur["x_lo"]), "x_hi": cur.get("x_f_hi", cur["x_hi"]),
+                      "change": x - prev.get("x_f", prev["x"]) if prev else None}
+        for c in r.get("contributions", []):
+            # 占有率の尺度での動きは、dzが小さければx(1-x)dzで近似できる
+            impacts.append({"party": p, **c, "dx": x * (1 - x) * c["dz"]})
+    impacts.sort(key=lambda c: -abs(c["dx"]))
+    return {"tau": result["tau"], "classified_until": result.get("classified_until"),
+            "parties": parties, "impacts": impacts[:top]}
+
+
 def main(argv: list[str] | None = None) -> None:
     import argparse
-
-    from .trend import OUTPUT_DIR, load_events, month_ends
 
     ap = argparse.ArgumentParser(description="logitの状態とベータ二項分布の観測による党勢の現在推定")
     ap.add_argument("--refit", action="store_true",
@@ -784,12 +801,22 @@ def main(argv: list[str] | None = None) -> None:
                     help="国政選挙を1回ずつ除いた補間の検証も行い、結果を別のファイルに書く(数時間かかる)")
     ap.add_argument("--workers", type=int, default=None)
     args = ap.parse_args(argv)
+    run(refit=args.refit, national_dev=args.national_dev, validate=args.validate, workers=args.workers)
+
+
+def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
+        workers: int | None = None) -> dict:
+    """月次の党勢指数v2を計算して保存する。保存後の国政選挙がデータにあればパラメータを
+    推定し直す。戻り値は出力の中身(result)、保存先(path)、検証の保存先(validation_path)、
+    推定し直した理由(refit_reason、推定し直さなければNone)。"""
+    from .trend import OUTPUT_DIR, load_events, month_ends
+
     events, cutoff = load_events()
     first = first_appearance(events)
     last = events[-1].vote_date
     tau = month_ends((last.year, last.month), (last.year, last.month))[-1]
     obs_by_party = {p: glm_observations(events, p, first[p], filter_levels=False) for p in ss.tracked_parties(events)}
-    reason = "--refitの指定" if args.refit else refit_reason(events)
+    reason = "--refitの指定" if refit else refit_reason(events)
     shu = ss.load_seat_vote_points()
     san = ss.load_seat_vote_points(house="sangiin")
     nat = latest_national(events)
@@ -807,7 +834,7 @@ def main(argv: list[str] | None = None) -> None:
                 continue
             ells[party] = ell
         fit_kw = {p: {"muni": True, "san": sangiin_link(shu, san)} for p in ells}
-        params_by_party, dev_by_party = estimate_all(obs_by_party, ells, fit_kw, args.workers, args.national_dev)
+        params_by_party, dev_by_party = estimate_all(obs_by_party, ells, fit_kw, workers, national_dev)
         meta = {"estimated_at": tau.isoformat(), "last_event": last.isoformat(),
                 "last_national": latest_national(events)}
         save_params(PARAMS_PATH, params_by_party, meta, dev_by_party)
@@ -853,12 +880,14 @@ def main(argv: list[str] | None = None) -> None:
     path = OUTPUT_DIR / f"state_space_glm_{tau.isoformat()}.json"
     path.write_text(json.dumps(out, ensure_ascii=False, indent=1))
     print(path)
-    if args.validate:
-        checks = national_interpolation_check(obs_by_party, shu, san, args.workers)
+    vpath = None
+    if validate:
+        checks = national_interpolation_check(obs_by_party, shu, san, workers)
         vpath = OUTPUT_DIR / f"state_space_glm_validation_{tau.isoformat()}.json"
         vpath.write_text(json.dumps({"tau": tau.isoformat(), "summary": interpolation_summary(checks),
                                      "parties": checks}, ensure_ascii=False, indent=1))
         print(vpath)
+    return {"result": out, "path": path, "validation_path": vpath, "refit_reason": reason}
 
 
 if __name__ == "__main__":

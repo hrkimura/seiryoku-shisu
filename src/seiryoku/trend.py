@@ -466,12 +466,29 @@ def split_alliances(events: list[Event]) -> list[Event]:
     return out
 
 
+def merge_branches(events: list[Event]) -> list[Event]:
+    """同じ系譜(ブランチ)の党の議席を、ブランチの名前の党にまとめる(lineage.BRANCH_OF)。"""
+    from .lineage import BRANCH_OF
+
+    out = []
+    for e in events:
+        if not any(p in BRANCH_OF for p in e.shares):
+            out.append(e)
+            continue
+        shares: dict[str, float] = {}
+        for p, v in e.shares.items():
+            q = BRANCH_OF.get(p, p)
+            shares[q] = shares.get(q, 0.0) + v
+        out.append(Event(e.vote_date, e.level, e.P, e.n, shares, e.name))
+    return out
+
+
 def load_events() -> tuple[list[Event], date | None]:
     from .fetch import jichisoken
     from .monthly_index import build_month_entries
 
     cutoff = endorsement_cutoff(jichisoken.municipal_head_endorsements_by_year())
-    return split_alliances(events_from_month_entries(build_month_entries(), cutoff)), cutoff
+    return merge_branches(split_alliances(events_from_month_entries(build_month_entries(), cutoff))), cutoff
 
 
 def main(argv: list[str] | None = None) -> None:

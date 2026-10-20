@@ -91,6 +91,7 @@ def build_month_facts(
     since: tuple[int, int] | None = None,
     attribution: dict | None = None,
     support: dict | None = None,
+    trend: dict | None = None,
 ) -> dict:
     """cp_history.load_history()の結果(年月順である必要はない)から、
     下書きに必要な事実だけを取り出して整形する。
@@ -171,6 +172,7 @@ def build_month_facts(
         "independent_share": latest["C_p"].get(INDEPENDENT, 0.0),
         "attribution": attribution,
         "support": support,
+        "trend": trend,
         "n_events": n_events,
         "level_weight_share": latest["level_weight_share"],
         "events_in_period": events_in_period,
@@ -247,6 +249,30 @@ def _format_support(s: dict) -> list[str]:
     return lines
 
 
+def _format_trend(t: dict) -> list[str]:
+    """党勢指数v2(state_space_glm.month_facts)を整形する。"""
+    if t.get("error"):
+        return [f"警告: 党勢指数v2を計算できなかった({t['error']})。"]
+    lines = []
+    if t.get("refit_reason"):
+        lines.append(f"党勢指数v2のパラメータを今回推定し直した({t['refit_reason']})。")
+    lines.append(f"党勢指数v2({t['tau']}時点、衆院の議席率の尺度、その月までの選挙による値。"
+                 "括弧内は±2標準偏差の幅、変化は前月末からのポイント差、変化の大きい順):")
+    rows = sorted(t["parties"].items(), key=lambda kv: -abs(kv[1]["change"] or 0.0))
+    for party, r in rows:
+        ch = f"{r['change'] * 100:+.1f}" if r["change"] is not None else "—"
+        lines.append(f"  - {party}: {r['x'] * 100:.1f}%({r['x_lo'] * 100:.1f}〜{r['x_hi'] * 100:.1f}%)、変化 {ch}")
+    if t["impacts"]:
+        lines.append("その月の選挙のうち党勢を大きく動かしたもの(選挙前の見込みと実際の議席の割合、"
+                     "党勢の動きのポイント換算、動きの大きい順):")
+        for c in t["impacts"]:
+            lines.append(f"  - {c['party']} {c['vote_date']} {c['name']}({c['level']}、{c['n']:.0f}議席): "
+                         f"見込み {c['expected'] * 100:.1f}% / 実際 {c['actual'] * 100:.1f}%、党勢 {c['dx'] * 100:+.2f}")
+    if t.get("classified_until"):
+        lines.append(f"注: {t['classified_until']}より後の市区町村長選は推薦・支持のデータが未公開のため入っていない。")
+    return lines
+
+
 def _format_facts_for_prompt(facts: dict) -> str:
     ps = facts["period_start"]
     if (ps["year"], ps["month"]) == (facts["year"], facts["month"]):
@@ -281,6 +307,8 @@ def _format_facts_for_prompt(facts: dict) -> str:
         lines.extend(_format_attribution(facts["attribution"]))
     if facts.get("support"):
         lines.extend(_format_support(facts["support"]))
+    if facts.get("trend"):
+        lines.extend(_format_trend(facts["trend"]))
 
     if facts["level_weight_share"]:
         lines.append(f"直近({facts['year']}年{facts['month']}月)の重みシェア内訳(どの種類の選挙がC_pを動かしたか):")

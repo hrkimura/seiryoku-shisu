@@ -272,12 +272,12 @@ def build_month_entries(
 
     include_sangiin = only_levels is None or "参院選" in only_levels
     include_shugiin = only_levels is None or "衆院選" in only_levels
-    sangiin_entries: list[tuple[tuple[int, int] | None, dict[str, int]]] = (
-        [(_ym(s.date), s.seats) for s in diet_history.fetch_sangiin_election_history()]
+    sangiin_entries: list[tuple[tuple[int, int] | None, str, dict[str, int]]] = (
+        [(_ym(s.date), s.date, s.seats) for s in diet_history.fetch_sangiin_election_history()]
         if include_sangiin else []
     )
-    shugiin_entries: list[tuple[tuple[int, int] | None, dict[str, int]]] = (
-        [(_ym(s.date), s.seats) for s in diet_history.fetch_shugiin_history()]
+    shugiin_entries: list[tuple[tuple[int, int] | None, str, dict[str, int]]] = (
+        [(_ym(s.date), s.date, s.seats) for s in diet_history.fetch_shugiin_history()]
         if include_shugiin else []
     )
     national_pop = population.national_population()
@@ -377,16 +377,16 @@ def build_month_entries(
                 entries.append((level_type, size, n_e, _phi(seats, national_parties)))
                 labels.append({"name": gikai_name, "level": level_type, "vote_date": term.get("vote_date")})
 
-        for date_key, seats in sangiin_entries:
+        for date_key, vote_date, seats in sangiin_entries:
             if date_key == ym:
                 n_e = sum(seats.values())
                 entries.append(("参院選", national_pop, n_e, _phi(seats, national_parties)))
-                labels.append({"name": "参院選", "level": "参院選", "vote_date": None})
-        for date_key, seats in shugiin_entries:
+                labels.append({"name": "参院選", "level": "参院選", "vote_date": vote_date})
+        for date_key, vote_date, seats in shugiin_entries:
             if date_key == ym:
                 n_e = sum(seats.values())
                 entries.append(("衆院選", national_pop, n_e, _phi(seats, national_parties)))
-                labels.append({"name": "衆院選", "level": "衆院選", "vote_date": None})
+                labels.append({"name": "衆院選", "level": "衆院選", "vote_date": vote_date})
 
         entries_by_month[ym] = entries
         labels_by_month[ym] = labels

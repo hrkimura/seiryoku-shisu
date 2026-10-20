@@ -397,3 +397,16 @@ def test_binomial_national_error_is_wider_for_a_party_with_few_seats():
     assert sd_small > 5 * sd_large
     x = 300.5 / 466
     assert sd_large * x * (1 - x) == pytest.approx(math.sqrt(x * (1 - x) / 465), rel=0.01)
+
+
+def test_month_facts_reports_the_latest_filtered_value_and_the_biggest_impacts():
+    def row(tau, x):
+        return {"tau": tau, "x": x, "x_lo": x / 2, "x_hi": x * 2, "x_f": x, "x_f_lo": x / 2, "x_f_hi": x * 2}
+    c = [{"vote_date": "2026-09-06", "level": "市区町村議会", "name": f"市{i}", "n": 5.0,
+          "actual": 0.2, "expected": 0.1, "dz": dz} for i, dz in enumerate((0.01, -0.3, 0.05))]
+    result = {"tau": "2026-09-30", "parties": {"A": {"series": [row("2026-08-31", 0.10), row("2026-09-30", 0.12)],
+                                                      "contributions": c}}}
+    f = glm.month_facts(result, top=2)
+    assert f["parties"]["A"]["change"] == pytest.approx(0.02)
+    assert [x["name"] for x in f["impacts"]] == ["市1", "市2"]
+    assert f["impacts"][0]["dx"] == pytest.approx(0.12 * 0.88 * -0.3)
