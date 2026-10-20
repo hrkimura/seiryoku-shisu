@@ -1073,3 +1073,153 @@ def generate_trend_by_party_chart(result: dict, validation: dict | None = None,
     fig.savefig(out_path, dpi=130, facecolor="white")
     plt.close(fig)
     return out_path
+
+
+TREND_SUPPORT_OUT_PATH = Path(__file__).resolve().parents[2] / "notes" / "images" / "trend_v2_vs_support.png"
+# 位置を決め打ちするラベル: {政党: (基準, 横のずれ(pt), 縦のずれ(pt), 横の寄せ, 縦の寄せ, 矢印)}。基準は
+# "point"(●)、"top"(誤差棒の上端)、"bar"(●と上端の間の誤差棒の上)。点が密集する党の見た目のための
+# 編集上の選択で、それ以外の党は自動で置く
+_SUPPORT_LABEL_FIXED = {
+    "立憲民主党": ("point", -7, 34, "right", "center", False),
+    "国民民主党": ("top", -3, 20, "left", "center", True),
+    "日本維新の会": ("point", 7, 30, "left", "center", False),
+    "いのちの党": ("point", 6, 16, "left", "center", False),
+}
+
+
+def _place_point_labels(ax, items: list[tuple[str, float, float, str]], obstacles_px: list, segments_data: list,
+                        boxes_px: list | None = None, diagonal: bool = True,
+                        prefer: dict[str, list[int]] | None = None) -> None:
+    """散布図の点にラベルを付ける。点のまわりの候補位置を近い順に試し、他のラベル・点・縦の線分・
+    対角線(y=x)・軸の外に重ならない最初の位置に置く。点から離れた位置になったら矢印で結ぶ。
+    itemsは(ラベル, x, y, 色)、obstacles_pxは避ける点の表示座標、segments_dataは避ける縦の線分
+    (x, y0, y1)、boxes_pxは避ける矩形(凡例など)の表示座標(x0, y0, x1, y1)。preferは{ラベル: 先に試す向き
+    (度)}で、その向きで置ける位置がなければ全方向を試す。描画位置が確定した後(tight_layoutの後)に呼ぶこと。"""
+    fig = ax.figure
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    pt = fig.dpi / 72
+    frame = ax.get_window_extent(renderer)
+    placed = list(boxes_px or [])
+    segs = []
+    for x, y0, y1 in segments_data:
+        (sx, sy0), (_, sy1) = ax.transData.transform([(x, y0), (x, y1)])
+        segs.append((sx - 3, min(sy0, sy1), sx + 3, max(sy0, sy1)))
+    marks = [(px - 7, py - 7, px + 7, py + 7) for px, py in obstacles_px]
+
+    def hits(b):
+        box = (b.x0, b.y0, b.x1, b.y1)
+        if box[0] < frame.x0 or box[2] > frame.x1 or box[1] < frame.y0 or box[3] > frame.y1:
+            return True
+        for o in placed + segs + marks:
+            if box[0] < o[2] and o[0] < box[2] and box[1] < o[3] and o[1] < box[3]:
+                return True
+        if diagonal:
+            inv = ax.transData.inverted()
+            signs = {np.sign(math.log10(cy) - math.log10(cx)) for cx, cy in
+                     inv.transform([(box[0], box[1]), (box[0], box[3]), (box[2], box[1]), (box[2], box[3])])}
+            if len(signs) > 1:
+                return True
+        return False
+
+    angles = [0, 180, 30, -30, 150, -150, 60, -60, 120, -120, 90, -90]
+    for label, x, y, color in items:
+        px, py = ax.transData.transform((x, y))
+        chosen = None
+        tries = [(r, a) for r in (9, 22, 38, 58, 82, 110) for a in (prefer or {}).get(label, [])] + \
+            [(r, a) for r in (9, 22, 38, 58, 82, 110, 145) for a in angles]
+        for r, a in tries:
+            dx, dy = r * math.cos(math.radians(a)), r * math.sin(math.radians(a))
+            ha = "left" if dx > 1 else "right" if dx < -1 else "center"
+            tx = ax.text(px + dx * pt, py + dy * pt, label, fontsize=12, weight="bold", ha=ha, va="center",
+                         transform=None)
+            b = tx.get_window_extent(renderer)
+            tx.remove()
+            if not hits(b):
+                chosen = (dx, dy, ha, b, r)
+                break
+        if chosen is None:
+            chosen = (9, 0, "left", None, 9)
+        dx, dy, ha, b, r = chosen
+        arrow = dict(arrowstyle="->", color=color, lw=0.9, shrinkA=1, shrinkB=5) if r > 12 else None
+        ax.annotate(label, (x, y), xytext=(dx, dy), textcoords="offset points", fontsize=12, color=color,
+                    weight="bold", ha=ha, va="center", arrowprops=arrow)
+        if b is not None:
+            placed.append((b.x0 - 2, b.y0 - 2, b.x1 + 2, b.y1 + 2))
+
+
+def generate_trend_support_scatter(result: dict, support: dict, out_path: Path = TREND_SUPPORT_OUT_PATH) -> Path:
+    """政党支持率(無党派を除いて再計算)と、党勢指数v2の最新月の値(●、縦棒は±2標準偏差)・
+    直近の衆院選の議席率(○)の散布図。○から●への矢印は、衆院選の後の党勢の動き。
+    supportはsupport_historyの1件({"updated", "S_p"})。点線は両者が等しいところ。"""
+    import matplotlib.ticker as mt
+
+    plt = _setup_fonts()
+    S = {p: v for p, v in support["S_p"].items() if p != "無党派"}
+    total = sum(S.values())
+    colors = _party_colors(plt, list(result["parties"]))
+    fig, ax = plt.subplots(figsize=(8.5, 7.5), dpi=150)
+    ax.plot([0.1, 100], [0.1, 100], color="#888", ls="--", lw=1.2, zorder=1)
+    items, fixed, pts, segs, shu_date = [], [], [], [], None
+    for party, r in result["parties"].items():
+        if party not in S:
+            continue
+        s = r["series"][-1]
+        x = S[party] / total * 100
+        y, lo, hi = (s.get(k, s[k.replace("_f", "")]) * 100 for k in ("x_f", "x_f_lo", "x_f_hi"))
+        c = colors[party]
+        # 衆院選からの矢印を誤差棒の上で見せるため、誤差棒は薄く描く
+        ax.errorbar(x, y, yerr=[[y - lo], [hi - y]], fmt="none", ecolor=c, elinewidth=1.0, capsize=3,
+                    alpha=0.6, zorder=2)
+        ax.plot(x, y, "o", ms=6.5, color=c, zorder=5)
+        segs.append((x, lo, hi))
+        pts.append((x, y))
+        shu = [n for n in r.get("national", []) if n["level"] == "衆院選"]
+        if shu:
+            last = max(shu, key=lambda n: n["vote_date"])
+            shu_date = last["vote_date"]
+            ys = max(last["y"] * 100, 0.11)
+            ax.plot(x, ys, "o", ms=6.5, mfc="white", mec=c, mew=1.5, zorder=4)
+            ax.annotate("", (x, y), xytext=(x, ys), zorder=3,
+                        arrowprops=dict(arrowstyle="-|>", color=c, lw=1.8, mutation_scale=12, shrinkA=4, shrinkB=4))
+            segs.append((x, min(ys, y), max(ys, y)))
+            pts.append((x, ys))
+        if party in _SUPPORT_LABEL_FIXED:
+            anchor, dx, dy, ha, va, arrow = _SUPPORT_LABEL_FIXED[party]
+            ay = {"top": hi, "bar": math.sqrt(y * hi)}.get(anchor, y)
+            fixed.append((party, x, ay, c, dx, dy, ha, va, arrow))
+        else:
+            items.append((party, x, y, c))
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlim(0.4, 100)
+    ax.set_ylim(0.1, 100)
+    for axis in (ax.xaxis, ax.yaxis):
+        axis.set_major_formatter(mt.FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.set_xlabel(f"政党支持率(無党派を除いて再計算, %, {support['updated']}更新)", fontsize=13)
+    ax.set_ylabel("党勢指数v2・衆院の議席率(%)", fontsize=13)
+    ax.grid(alpha=0.3, which="major")
+    handles = [plt.Line2D([], [], ls="", marker="o", color="#444", ms=6.5),
+               plt.Line2D([], [], ls="", marker="o", mfc="white", mec="#444", ms=6.5, mew=1.5),
+               plt.Line2D([], [], color="#888", ls="--", lw=1.2)]
+    labels = [f"党勢指数v2({result['tau']}、縦棒は±2標準偏差)", f"衆院選の議席率({shu_date})", "支持率と等しい線"]
+    ax.legend(handles, labels, loc="upper left", fontsize=10)
+    fig.tight_layout()
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    leg = ax.get_legend().get_window_extent(renderer)
+    boxes = [(leg.x0, leg.y0, leg.x1, leg.y1)]
+    for party, x, y, c, dx, dy, ha, va, arrow in fixed:
+        # 矢印はラベルの中央でなく点に近い側の端から出し、隣の党の誤差棒を横切らないようにする
+        relpos = {"left": (0, 0.5), "right": (1, 0.5)}.get(ha, (0.5, 0.5))
+        props = dict(arrowstyle="->", color=c, lw=0.9, shrinkA=1, shrinkB=1, relpos=relpos) if arrow else None
+        a = ax.annotate(party, (x, y), xytext=(dx, dy), textcoords="offset points", fontsize=12, color=c,
+                        weight="bold", ha=ha, va=va, arrowprops=props)
+        b = a.get_window_extent(renderer)
+        boxes.append((b.x0 - 2, b.y0 - 2, b.x1 + 2, b.y1 + 2))
+    _place_point_labels(ax, sorted(items, key=lambda it: -it[2]), [tuple(ax.transData.transform(p)) for p in pts],
+                        segs, boxes_px=boxes)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, facecolor="white")
+    plt.close(fig)
+    return out_path

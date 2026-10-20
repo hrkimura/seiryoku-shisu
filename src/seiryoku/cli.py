@@ -141,6 +141,9 @@ def _update_trend_v2(image_dir: Path) -> dict:
         validation = json.loads(validations[-1].read_text()) if validations else None
         charts.generate_trend_chart(result, out_path=image_dir / "trend_v2.png")
         charts.generate_trend_by_party_chart(result, validation, out_path=image_dir / "trend_v2_by_party.png")
+        support = support_history.load_history()
+        if support:
+            charts.generate_trend_support_scatter(result, support[-1], out_path=image_dir / "trend_v2_vs_support.png")
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
     return {**glm.month_facts(result), "refit_reason": res["refit_reason"],

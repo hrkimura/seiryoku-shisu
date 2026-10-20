@@ -214,7 +214,7 @@ def _trend_result():
                          {"vote_date": "2025-07-20", "level": "参院選", "y": x}],
             "alpha": {"参院選": -0.2}, "params": {"san_load": 0.73},
         }
-    return {"classified_until": "2025-06-30", "parties": parties}
+    return {"tau": taus[-1], "classified_until": "2025-06-30", "parties": parties}
 
 
 def test_generate_trend_charts_write_pngs(tmp_path, monkeypatch):
@@ -227,3 +227,7 @@ def test_generate_trend_charts_write_pngs(tmp_path, monkeypatch):
     a = charts.generate_trend_chart(r, out_path=tmp_path / "a.png")
     b = charts.generate_trend_by_party_chart(r, v, out_path=tmp_path / "b.png")
     assert a.stat().st_size > 0 and b.stat().st_size > 0
+    c = charts.generate_trend_support_scatter(
+        r, {"updated": "2026-10-06", "S_p": {"無党派": 40.0, "自由民主党": 30.0, "参政党": 4.0, "日本保守党": 1.0}},
+        out_path=tmp_path / "c.png")
+    assert c.stat().st_size > 0
