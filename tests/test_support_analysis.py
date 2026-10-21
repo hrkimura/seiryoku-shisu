@@ -145,3 +145,10 @@ def test_trend_support_diffs_longer_horizon_uses_non_overlapping_periods():
     ldp = [p for p in d["points"] if p["party"] == "自由民主党"]
     assert all(abs(p["dx"] - 3.0) < 1e-9 for p in ldp)
     assert sa.trend_support_diffs(result, history, horizon=6)["periods"] == [("2026-04-30", "2026-10-31")]
+
+
+def test_trend_support_diffs_keeps_only_the_largest_parties(monkeypatch):
+    monkeypatch.setattr(sa, "MAX_DIFF_PARTIES", 3)
+    d = sa.trend_support_diffs(_v2_result(), _SUPPORT)
+    # 10月末のv2の値は自民0.55、立憲0.10、共産0.04、公明0.04、参政0.03で、同じ値は元の並び順を保つ
+    assert sorted(p["party"] for p in d["points"]) == ["日本共産党", "立憲民主党", "自由民主党"]

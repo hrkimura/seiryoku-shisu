@@ -257,6 +257,9 @@ def _spearman(x: np.ndarray, y: np.ndarray) -> dict | None:
 # 差をとる期間(か月)。v2の水準の誤差は隣の月どうしでほぼ共通なので、期間を延ばすと、党勢の
 # 本当の変化が大きくなる一方で両端の誤差はあまり増えず、相関を検出しやすくなる
 DIFF_HORIZONS = (1, 3, 6)
+# 散布図の配色(charts._party_colors、tab10)で党を区別できる数。超えた分は最新のv2の値が小さい党から
+# 外す。相関も図に載る点で計算し、図と数値を食い違わせない
+MAX_DIFF_PARTIES = 10
 
 
 def trend_support_diffs(result: dict, history: list[dict], horizon: int = 1) -> dict:
@@ -279,9 +282,14 @@ def trend_support_diffs(result: dict, history: list[dict], horizon: int = 1) -> 
             cache[tau] = {**v, "S_p": _renormalized(v["S_p"])} if v else None
         return cache[tau]
 
+    def latest(party: str) -> float:
+        cur = result["parties"][party]["series"][-1]
+        return cur.get("x_f", cur["x"])
+
+    kept = sorted(result["parties"], key=latest, reverse=True)[:MAX_DIFF_PARTIES]
     points = []
-    for party, r in result["parties"].items():
-        s = r["series"]
+    for party in kept:
+        s = result["parties"][party]["series"]
         for i in range(len(s) - 1, horizon - 1, -horizon):
             prev, cur = s[i - horizon], s[i]
             a, b = support(prev["tau"]), support(cur["tau"])
