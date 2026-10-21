@@ -1,0 +1,9 @@
+[Unit]
+Description=政党支持率の取得を毎日12時に実行する(更新の取りこぼしを防ぐため)
+
+[Timer]
+OnCalendar=*-*-* 12:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

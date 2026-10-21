@@ -1,0 +1,8 @@
+[Unit]
+Description=政党支持率(三春充希氏の集計)の取得と、新しい更新日の値の追記
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Desktop/program/色々/20260831_政党影響力指数
+Environment=PYTHONPATH=%h/Desktop/program/色々/20260831_政党影響力指数/src
+ExecStart=%h/Desktop/program/色々/bin/python3 -m seiryoku.support_fetch

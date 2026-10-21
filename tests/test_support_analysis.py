@@ -87,3 +87,61 @@ def test_provisional_months_are_counted():
     cp_history, support = _inputs([1, 2, 3], [1, 2, 3])
     r = sa.analyze_party(sa.contiguous_pairs(cp_history, support, "A"), provisional_start=(2020, 2))
     assert r["n_provisional_months"] == 2
+
+
+def _v2_result():
+    def series(xs):
+        return [{"tau": t, "x": x, "x_f": x} for t, x in zip(["2026-08-31", "2026-09-30", "2026-10-31"], xs)]
+    return {"parties": {
+        "自由民主党": {"series": series([0.50, 0.52, 0.55])},
+        "参政党": {"series": series([0.05, 0.04, 0.03])},
+        "立憲民主党": {"series": series([0.10, 0.11, 0.10])},
+        "日本共産党": {"series": series([0.03, 0.03, 0.04])},
+        "公明党": {"series": series([0.04, 0.04, 0.04])},
+    }}
+
+
+_SUPPORT = [
+    {"updated": "2026-10-06", "S_p": {"無党派": 40.0, "自由民主党": 30.0, "参政党": 5.0, "立憲民主党": 3.0,
+                                      "日本共産党": 2.0, "チームみらい": 2.0}},
+    {"updated": "2026-11-05", "S_p": {"無党派": 40.0, "自由民主党": 32.0, "参政党": 4.0, "立憲民主党": 3.0,
+                                      "日本共産党": 1.0, "チームみらい": 2.0}},
+]
+
+
+def test_trend_support_diffs_pairs_month_ends():
+    d = sa.trend_support_diffs(_v2_result(), _SUPPORT)
+    # 8月末にそろえられる支持率はなく、公明党とチームみらいは片方にしかないので、9月末→10月末の4党だけ
+    assert d["periods"] == [("2026-09-30", "2026-10-31")]
+    assert sorted(p["party"] for p in d["points"]) == ["参政党", "日本共産党", "立憲民主党", "自由民主党"]
+    ldp = next(p for p in d["points"] if p["party"] == "自由民主党")
+    assert abs(ldp["dx"] - 3.0) < 1e-9
+    # 無党派を除いた合計は9月末が42、10月末が(10/06と11/05の補間)、自民の割合の差
+    w = 25 / 30
+    oct_ldp = (1 - w) * 30 + w * 32
+    oct_total = 42.0 + w * (42.0 - 42.0)
+    assert abs(ldp["ds"] - (oct_ldp / oct_total * 100 - 30 / 42 * 100)) < 1e-9
+    assert d["alignment"]["2026-09-30"]["method"] == "nearest"
+    assert d["alignment"]["2026-10-31"]["method"] == "interpolated"
+    assert d["n"] == 4 and d["pearson"]["ci95"] is not None and d["spearman"] is not None
+
+
+def test_trend_support_diffs_without_two_month_ends():
+    d = sa.trend_support_diffs(_v2_result(), _SUPPORT[:1])
+    assert d["points"] == [] and d["pearson"] is None and d["spearman"] is None
+
+
+def test_trend_support_diffs_longer_horizon_uses_non_overlapping_periods():
+    taus = ["2026-04-30", "2026-05-31", "2026-06-30", "2026-07-31", "2026-08-31", "2026-09-30", "2026-10-31"]
+    result = {"parties": {p: {"series": [{"tau": t, "x": 0.1 + k * i / 100, "x_f": 0.1 + k * i / 100}
+                                         for i, t in enumerate(taus)]}
+                          for k, p in enumerate(["自由民主党", "参政党"], start=1)}}
+    history = [{"updated": t, "S_p": {"無党派": 40.0, "自由民主党": 30.0 + i, "参政党": 5.0}}
+               for i, t in enumerate(taus)]
+    d = sa.trend_support_diffs(result, history, horizon=3)
+    # 最新の10月末から3か月ずつ区切る。4月末の端は残っても使わない区切り方にならないこと
+    assert d["periods"] == [("2026-04-30", "2026-07-31"), ("2026-07-31", "2026-10-31")]
+    assert d["horizon"] == 3 and d["n"] == 4
+    ldp = [p for p in d["points"] if p["party"] == "自由民主党"]
+    assert all(abs(p["dx"] - 3.0) < 1e-9 for p in ldp)
+    assert sa.trend_support_diffs(result, history, horizon=6)["periods"] == [("2026-04-30", "2026-10-31")]

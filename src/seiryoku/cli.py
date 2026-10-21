@@ -142,12 +142,17 @@ def _update_trend_v2(image_dir: Path) -> dict:
         charts.generate_trend_chart(result, out_path=image_dir / "trend_v2.png")
         charts.generate_trend_by_party_chart(result, validation, out_path=image_dir / "trend_v2_by_party.png")
         support = support_history.load_history()
+        diffs = None
         if support:
             charts.generate_trend_support_scatter(result, support[-1], out_path=image_dir / "trend_v2_vs_support.png")
+            diffs = {h: support_analysis.trend_support_diffs(result, support, h) for h in support_analysis.DIFF_HORIZONS}
+            for h, d in diffs.items():
+                if d["points"]:
+                    charts.generate_trend_support_diff_scatter(d, out_path=image_dir / f"trend_v2_support_diff_{h}m.png")
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
     return {**glm.month_facts(result), "refit_reason": res["refit_reason"],
-            "validation_tau": validation["tau"] if validation else None}
+            "validation_tau": validation["tau"] if validation else None, "support_diff": diffs}
 
 
 def run() -> dict:
@@ -259,6 +264,16 @@ def _print_trend_summary(t: dict) -> None:
     for party, r in sorted(t["parties"].items(), key=lambda kv: -kv[1]["x"]):
         ch = f"{r['change'] * 100:+.1f}" if r["change"] is not None else "—"
         print(f"  {party}: {r['x'] * 100:.1f}%(前月差 {ch})")
+    for h, d in (t.get("support_diff") or {}).items():
+        if d["points"]:
+            line = f"  支持率の{h}か月差との散布図: {len(d['periods'])}期間・{d['n']}点"
+            if d["pearson"]:
+                line += f", r={d['pearson']['r']:+.2f}"
+            if d["spearman"]:
+                line += f", ρ={d['spearman']['rho']:+.2f}"
+            print(line)
+        else:
+            print(f"  支持率の{h}か月差との散布図: {h}か月離れた月末の支持率がまだそろわないため描いていません")
     if t["refit_reason"]:
         print(f"  [要対応] パラメータを推定し直しました({t['refit_reason']})。補間の検証は自動では回さないので、"
               "PYTHONPATH=src python -m seiryoku.state_space_glm --validate --workers 8 を実行してください(30分ほど)。")

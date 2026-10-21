@@ -19,6 +19,7 @@ $C_p(t)$は直近12か月の後方窓で集計したフロー指標なので、$
 from __future__ import annotations
 
 import json
+import math
 import warnings
 from pathlib import Path
 
@@ -218,3 +219,89 @@ def analyze_all(
 def save_results(results: dict[str, dict]) -> None:
     RESULT_PATH.parent.mkdir(exist_ok=True)
     RESULT_PATH.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _renormalized(S_p: dict[str, float]) -> dict[str, float]:
+    """無党派を除いて合計100%に直す。党勢指数v2は政党の間の占有率なので、同じ尺度に揃える。"""
+    S = {p: v for p, v in S_p.items() if p != "無党派"}
+    total = sum(S.values())
+    return {p: v / total * 100 for p, v in S.items()} if total else {}
+
+
+def _pearson_with_ci(x: np.ndarray, y: np.ndarray) -> dict | None:
+    """Pearsonの相関と、Fisherのz変換による95%信頼区間(n>3で定義される)。"""
+    from scipy.stats import norm, pearsonr
+
+    n = len(x)
+    if n < 3 or _is_constant(x) or _is_constant(y):
+        return None
+    r, p = pearsonr(x, y)
+    out = {"r": float(r), "p": float(p), "n": n, "ci95": None}
+    if n > 3 and abs(r) < 1:
+        z, se = math.atanh(r), 1 / math.sqrt(n - 3)
+        q = norm.ppf(0.975)
+        out["ci95"] = [math.tanh(z - q * se), math.tanh(z + q * se)]
+    return out
+
+
+def _spearman(x: np.ndarray, y: np.ndarray) -> dict | None:
+    from scipy.stats import spearmanr
+
+    n = len(x)
+    if n < 3 or _is_constant(x) or _is_constant(y):
+        return None
+    rho, p = spearmanr(x, y)
+    return {"rho": float(rho), "p": float(p), "n": n}
+
+
+# 差をとる期間(か月)。v2の水準の誤差は隣の月どうしでほぼ共通なので、期間を延ばすと、党勢の
+# 本当の変化が大きくなる一方で両端の誤差はあまり増えず、相関を検出しやすくなる
+DIFF_HORIZONS = (1, 3, 6)
+
+
+def trend_support_diffs(result: dict, history: list[dict], horizon: int = 1) -> dict:
+    """党勢指数v2のhorizonか月の差と、同じ期間の政党支持率の差を、党×期間の点として集める。
+
+    期間は最新の月末から過去へhorizonか月ずつ、重ならないように区切る(重ねると点が独立でなくなる)。
+    支持率は月末の値にそろえる(support_history.value_atの補間)。v2の値はmonth_factsと同じく
+    各月末までの選挙による値(x_f)を使う。単位はどちらも%ポイント。同じ期間の各党の点は独立では
+    ない(占有率の和は一定)ので、相関の信頼区間は目安として読む。
+    """
+    from datetime import date
+
+    from .support_history import value_at
+
+    cache: dict[str, dict | None] = {}
+
+    def support(tau: str) -> dict | None:
+        if tau not in cache:
+            v = value_at(history, date.fromisoformat(tau))
+            cache[tau] = {**v, "S_p": _renormalized(v["S_p"])} if v else None
+        return cache[tau]
+
+    points = []
+    for party, r in result["parties"].items():
+        s = r["series"]
+        for i in range(len(s) - 1, horizon - 1, -horizon):
+            prev, cur = s[i - horizon], s[i]
+            a, b = support(prev["tau"]), support(cur["tau"])
+            if not a or not b or party not in a["S_p"] or party not in b["S_p"]:
+                continue
+            points.append({
+                "party": party, "from": prev["tau"], "to": cur["tau"],
+                "dx": 100 * (cur.get("x_f", cur["x"]) - prev.get("x_f", prev["x"])),
+                "ds": b["S_p"][party] - a["S_p"][party],
+            })
+    x = np.array([p["ds"] for p in points])
+    y = np.array([p["dx"] for p in points])
+    points.sort(key=lambda p: (p["to"], p["party"]))
+    return {
+        "horizon": horizon,
+        "points": points,
+        "n": len(points),
+        "periods": sorted({(p["from"], p["to"]) for p in points}),
+        "alignment": {tau: {k: v[k] for k in ("method", "dates", "offset_days")}
+                      for tau, v in sorted(cache.items()) if v},
+        "pearson": _pearson_with_ci(x, y),
+        "spearman": _spearman(x, y),
+    }

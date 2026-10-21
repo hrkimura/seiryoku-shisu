@@ -249,6 +249,27 @@ def _format_support(s: dict) -> list[str]:
     return lines
 
 
+def _format_support_diff(d: dict | None, horizon: int) -> list[str]:
+    """党勢指数v2と政党支持率のhorizonか月の差(support_analysis.trend_support_diffs)を整形する。"""
+    if not d or not d["points"]:
+        return [f"党勢指数v2と政党支持率の{horizon}か月差の散布図: {horizon}か月離れた月末の支持率がまだそろわないため、今回はなし。"]
+    _METHOD = {"exact": "更新日が月末", "interpolated": "前後の更新から補間", "nearest": "最も近い更新"}
+    lines = [f"党勢指数v2と政党支持率(無党派を除いて再計算)の{horizon}か月差(重ならない{len(d['periods'])}期間・"
+             f"{d['n']}点、どちらもポイント):"]
+    for p in d["points"]:
+        lines.append(f"  - {p['party']} {p['from']}→{p['to']}: v2 {p['dx']:+.2f}、支持率 {p['ds']:+.2f}")
+    if d["pearson"]:
+        c = d["pearson"]
+        ci = f"、95%区間 {c['ci95'][0]:+.2f}〜{c['ci95'][1]:+.2f}" if c["ci95"] else ""
+        lines.append(f"  相関 r={c['r']:+.2f}(n={c['n']}{ci}、同じ月の党どうしは独立でないので区間は目安)")
+    if d["spearman"]:
+        lines.append(f"  順位相関 ρ={d['spearman']['rho']:+.2f}")
+    lines.append("  支持率を月末にそろえた方法:")
+    for tau, a in d["alignment"].items():
+        lines.append(f"    - {tau}: {_METHOD[a['method']]}({'・'.join(a['dates'])}、月末から最も近い更新まで{a['offset_days']}日)")
+    return lines
+
+
 def _format_trend(t: dict) -> list[str]:
     """党勢指数v2(state_space_glm.month_facts)を整形する。"""
     if t.get("error"):
@@ -262,6 +283,8 @@ def _format_trend(t: dict) -> list[str]:
     for party, r in rows:
         ch = f"{r['change'] * 100:+.1f}" if r["change"] is not None else "—"
         lines.append(f"  - {party}: {r['x'] * 100:.1f}%({r['x_lo'] * 100:.1f}〜{r['x_hi'] * 100:.1f}%)、変化 {ch}")
+    for h, d in (t.get("support_diff") or {}).items():
+        lines.extend(_format_support_diff(d, h))
     if t["impacts"]:
         lines.append("その月の選挙のうち党勢を大きく動かしたもの(選挙前の見込みと実際の議席の割合、"
                      "党勢の動きのポイント換算、動きの大きい順):")

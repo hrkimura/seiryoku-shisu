@@ -231,3 +231,12 @@ def test_generate_trend_charts_write_pngs(tmp_path, monkeypatch):
         r, {"updated": "2026-10-06", "S_p": {"無党派": 40.0, "自由民主党": 30.0, "参政党": 4.0, "日本保守党": 1.0}},
         out_path=tmp_path / "c.png")
     assert c.stat().st_size > 0
+
+
+def test_generate_trend_support_diff_scatter_writes_png(tmp_path):
+    pts = [{"party": p, "from": "2026-09-30", "to": "2026-10-31", "dx": dx, "ds": ds}
+           for p, dx, ds in [("自由民主党", 3.0, 1.5), ("参政党", -1.0, -0.8), ("立憲民主党", 0.5, 0.0)]]
+    diffs = {"horizon": 3, "points": pts, "n": 3, "periods": [("2026-09-30", "2026-10-31")],
+             "pearson": {"r": 0.9, "p": 0.1, "n": 3, "ci95": None}, "spearman": {"rho": 1.0, "p": 0.0, "n": 3}}
+    out = charts.generate_trend_support_diff_scatter(diffs, out_path=tmp_path / "d.png")
+    assert out.stat().st_size > 0

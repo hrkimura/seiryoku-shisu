@@ -870,6 +870,52 @@ TREND_BY_PARTY_OUT_PATH = Path(__file__).resolve().parents[2] / "notes" / "image
 TREND_PARTY_ORDER = ["自由民主党", "立憲民主党", "国民民主党", "参政党", "公明党", "日本維新の会", "日本共産党", "いのちの党"]
 
 
+def generate_trend_support_diff_scatter(diffs: dict, out_path: Path) -> Path:
+    """党勢指数v2の差(縦)と、同じ期間の政党支持率の差(横)の散布図。点は党×期間で、
+    diffsはsupport_analysis.trend_support_diffsの戻り値。"""
+    plt = _setup_fonts()
+    pts = diffs["points"]
+    colors = _party_colors(plt, sorted({p["party"] for p in pts}))
+    fig, ax = plt.subplots(figsize=(8.5, 7.0), dpi=150)
+    ax.axhline(0, color="#888", lw=1.0, zorder=1)
+    ax.axvline(0, color="#888", lw=1.0, zorder=1)
+    for p in pts:
+        ax.plot(p["ds"], p["dx"], "o", ms=7, color=colors[p["party"]], zorder=3)
+    xs = [p["ds"] for p in pts] or [0.0]
+    ys = [p["dx"] for p in pts] or [0.0]
+    # 原点を中央に置き、正負どちらの動きも同じ広さで見せる
+    hx, hy = 1.25 * max(map(abs, xs)) or 1.0, 1.25 * max(map(abs, ys)) or 1.0
+    ax.set_xlim(-hx, hx)
+    ax.set_ylim(-hy, hy)
+    periods = diffs["periods"]
+    span = f"{periods[0][0]}→{periods[-1][1]}" if periods else ""
+    h = diffs.get("horizon", 1)
+    ax.set_xlabel(f"政党支持率の{h}か月差(無党派を除いて再計算, ポイント)", fontsize=13)
+    ax.set_ylabel(f"党勢指数v2の{h}か月差(ポイント)", fontsize=13)
+    lines = [f"{len(periods)}期間・{diffs['n']}点({span})"]
+    if diffs.get("pearson"):
+        c = diffs["pearson"]
+        ci = f"、95%区間 {c['ci95'][0]:+.2f}〜{c['ci95'][1]:+.2f}" if c["ci95"] else ""
+        lines.append(f"相関 r = {c['r']:+.2f}{ci}")
+    if diffs.get("spearman"):
+        lines.append(f"順位相関 ρ = {diffs['spearman']['rho']:+.2f}")
+    ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, ha="left", va="top", fontsize=11,
+            bbox=dict(facecolor="white", edgecolor="#ccc"))
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    box = ax.texts[-1].get_window_extent(renderer)
+    label = (lambda p: f"{p['party']} {p['to'][5:7]}月") if len(periods) > 1 else (lambda p: p["party"])
+    _place_point_labels(ax, [(label(p), p["ds"], p["dx"], colors[p["party"]]) for p in pts],
+                        [tuple(ax.transData.transform((p["ds"], p["dx"]))) for p in pts], [],
+                        boxes_px=[(box.x0, box.y0, box.x1, box.y1)], diagonal=False)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, facecolor="white")
+    plt.close(fig)
+    return out_path
+
+
 def _setup_fonts():
     import matplotlib
     matplotlib.use("Agg")

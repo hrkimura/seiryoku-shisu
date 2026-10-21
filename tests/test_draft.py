@@ -320,3 +320,16 @@ def test_trend_section_lists_parties_by_change_and_the_impacts():
     assert body.index("  - B:") < body.index("  - A:")
     assert "見込み 20.0% / 実際 0.0%" in body
     assert draft._format_trend({"error": "x"})[0].startswith("警告")
+
+
+def test_format_support_diff_lists_points_and_alignment():
+    from seiryoku import draft
+
+    d = {"points": [{"party": "自由民主党", "from": "2026-09-30", "to": "2026-10-31", "dx": 3.0, "ds": 1.5}],
+         "n": 1, "periods": [("2026-09-30", "2026-10-31")], "pearson": None, "spearman": None,
+         "alignment": {"2026-09-30": {"method": "nearest", "dates": ["2026-10-06"], "offset_days": 6}}}
+    text = "\n".join(draft._format_support_diff(d, 1))
+    assert "自由民主党 2026-09-30→2026-10-31: v2 +3.00、支持率 +1.50" in text
+    assert "最も近い更新(2026-10-06、月末から最も近い更新まで6日)" in text
+    assert "3か月差" in draft._format_support_diff(None, 3)[0]
+    assert "1か月差(重ならない1期間・1点" in text

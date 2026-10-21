@@ -6,7 +6,7 @@ cp_history.pyと違い、こちらは追記方式である。取得元が現在�
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 HISTORY_PATH = Path(__file__).resolve().parents[2] / "data" / "support_history.json"
@@ -49,3 +49,43 @@ def monthly_series(history: list[dict]) -> dict[tuple[int, int], dict[str, float
         y, m, _ = (int(x) for x in h["updated"].split("-"))
         by_month[(y, m)] = h["S_p"]
     return by_month
+
+
+def _nearest_month_end(d: date) -> date:
+    this_end = date(d.year + d.month // 12, d.month % 12 + 1, 1) - timedelta(days=1)
+    prev_end = date(d.year, d.month, 1) - timedelta(days=1)
+    return this_end if (this_end - d) < (d - prev_end) else prev_end
+
+
+def value_at(history: list[dict], day: date) -> dict | None:
+    """月末dayの$S_p$を、更新日の前後の記録から求める。
+
+    前後に記録があれば更新日の間隔で線形補間する(両方にある政党だけ)。片側にしかなければ
+    最も近い記録を使うが、その記録の更新日に最も近い月末がdayである場合に限る。そうでない
+    ときに使うと、別の月末の値として数えるべき記録を二重に使うことになる。
+    戻り値は{"S_p", "method"("exact"/"interpolated"/"nearest"), "dates"(使った更新日), "offset_days"}。
+    """
+    snaps = sorted(history, key=lambda h: h["updated"])
+    if not snaps:
+        return None
+    days = [date.fromisoformat(h["updated"]) for h in snaps]
+    before = [i for i, d in enumerate(days) if d <= day]
+    after = [i for i, d in enumerate(days) if d >= day]
+    if before and after and days[before[-1]] == day:
+        i = before[-1]
+        return {"S_p": dict(snaps[i]["S_p"]), "method": "exact", "dates": [snaps[i]["updated"]], "offset_days": 0}
+    if before and after:
+        i, j = before[-1], after[0]
+        w = (day - days[i]).days / (days[j] - days[i]).days
+        a, b = snaps[i]["S_p"], snaps[j]["S_p"]
+        return {
+            "S_p": {p: (1 - w) * a[p] + w * b[p] for p in a if p in b},
+            "method": "interpolated",
+            "dates": [snaps[i]["updated"], snaps[j]["updated"]],
+            "offset_days": min((day - days[i]).days, (days[j] - day).days),
+        }
+    i = before[-1] if before else after[0]
+    if _nearest_month_end(days[i]) != day:
+        return None
+    return {"S_p": dict(snaps[i]["S_p"]), "method": "nearest", "dates": [snaps[i]["updated"]],
+            "offset_days": abs((days[i] - day).days)}
