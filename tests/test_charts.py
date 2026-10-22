@@ -240,3 +240,8 @@ def test_generate_trend_support_diff_scatter_writes_png(tmp_path):
              "pearson": {"r": 0.9, "p": 0.1, "n": 3, "ci95": None}, "spearman": {"rho": 1.0, "p": 0.0, "n": 3}}
     out = charts.generate_trend_support_diff_scatter(diffs, out_path=tmp_path / "d.png")
     assert out.stat().st_size > 0
+
+
+def test_generate_trend_model_diagram_writes_a_png(tmp_path):
+    out = charts.generate_trend_model_diagram(out_path=tmp_path / "m.png")
+    assert out.stat().st_size > 0

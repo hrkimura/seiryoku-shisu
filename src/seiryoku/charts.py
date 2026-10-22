@@ -1138,6 +1138,72 @@ def generate_trend_by_party_chart(result: dict, validation: dict | None = None,
     return out_path
 
 
+TREND_MODEL_OUT_PATH = Path(__file__).resolve().parents[2] / "notes" / "images" / "trend_v2_model.png"
+# 模式図で選挙を置く月。並びは説明のための例で、実際の日程ではない
+_MODEL_DIAGRAM_ELECTIONS = [(0, "衆院選"), (2, "市区町村議会"), (3, "市区町村議会"), (4, "都道府県議会"),
+                            (5, "参院選"), (6, "市区町村議会"), (8, "衆院選")]
+_MODEL_DIAGRAM_NOTES = [
+    (("衆院選",), "-", "衆院選: 議席率が、ほぼそのまま党勢を映す"),
+    (("参院選",), "-", "参院選: 議席と得票の関係から衆院の尺度に換算して、党勢を映す"),
+    (("都道府県議会", "市区町村議会"), "--",
+     "地方議会選挙: 地盤の違いを差し引いて、間接的に映す。見込みとの差の分だけ党勢の推定を動かす"),
+]
+
+
+def generate_trend_model_diagram(out_path: Path = TREND_MODEL_OUT_PATH) -> Path:
+    """党勢指数v2の仕組みの模式図。上の段は毎月動く見えない党勢、下の段は選挙の結果で、
+    国政選挙は党勢を直接(実線)、地方議会選挙は間接的に(破線)映す。"""
+    from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch
+
+    plt = _setup_fonts()
+    n_months = 1 + max(m for m, _ in _MODEL_DIAGRAM_ELECTIONS)
+    fig, ax = plt.subplots(figsize=(12, 7))
+    ax.set_xlim(-2.4, n_months - 0.4)
+    ax.set_ylim(-2.1, 5.2)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    y_state, y_obs, r = 3.7, 1.0, 0.36
+    ax.text(-2.35, y_state, "党勢\n(見えない量)", fontsize=14, va="center", ha="left", weight="bold")
+    ax.text(-2.35, y_obs, "選挙の結果\n(観測)", fontsize=14, va="center", ha="left", weight="bold")
+    for m in range(n_months):
+        ax.add_patch(Circle((m, y_state), r, facecolor="#dfe9f5", edgecolor="#1f4e79", lw=1.8, zorder=3))
+        if m + 1 < n_months:
+            ax.add_patch(FancyArrowPatch((m + r, y_state), (m + 1 - r, y_state), arrowstyle="-|>",
+                                         mutation_scale=14, color="#1f4e79", lw=1.5))
+    ax.text((n_months - 1) / 2, y_state + 0.8, "毎月、前の月から予測できない向きに少しずつ動く(ランダムウォーク)",
+            fontsize=13, ha="center", va="center", color="#1f4e79")
+
+    w, h = 0.9, 0.62
+    for m, level in _MODEL_DIAGRAM_ELECTIONS:
+        color = TREND_LEVEL_COLORS[level]
+        national = level in ("衆院選", "参院選")
+        ax.add_patch(FancyBboxPatch((m - w / 2, y_obs - h / 2), w, h, boxstyle="round,pad=0.04",
+                                    facecolor=color, edgecolor="none", alpha=0.9, zorder=3))
+        label = level if national else level.replace("議会", "\n議会")
+        ax.text(m, y_obs, label, fontsize=10 if national else 9, ha="center", va="center",
+                color="white", weight="bold", zorder=4, linespacing=1.0)
+        ax.add_patch(FancyArrowPatch((m, y_state - r), (m, y_obs + h / 2 + 0.04), arrowstyle="-|>",
+                                     mutation_scale=16, color=color, lw=2.6 if national else 1.6,
+                                     linestyle="-" if national else (0, (4, 3))))
+    ax.add_patch(FancyArrowPatch((-0.4, y_obs - 0.75), (n_months - 0.6, y_obs - 0.75), arrowstyle="-|>",
+                                 mutation_scale=14, color="#666666", lw=1.2))
+    ax.text(n_months - 0.6, y_obs - 0.98, "時間(1か月ごと)", fontsize=11, ha="right", va="top", color="#666666")
+
+    for i, (levels, ls, text) in enumerate(_MODEL_DIAGRAM_NOTES):
+        y = -0.85 - i * 0.45
+        for j, level in enumerate(levels):
+            x0 = -2.3 + j * 0.35
+            ax.plot([x0, x0 + 0.6 / len(levels) - (0.1 if len(levels) > 1 else 0)], [y, y],
+                    color=TREND_LEVEL_COLORS[level], lw=2.4, ls="-" if ls == "-" else (0, (2, 1.5)))
+        ax.text(-1.55, y, text, fontsize=11.5, va="center", ha="left")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=160, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
 TREND_SUPPORT_OUT_PATH = Path(__file__).resolve().parents[2] / "notes" / "images" / "trend_v2_vs_support.png"
 # 位置を決め打ちするラベル: {政党: (基準, 横のずれ(pt), 縦のずれ(pt), 横の寄せ, 縦の寄せ, 矢印)}。基準は
 # "point"(●)、"top"(誤差棒の上端)、"bar"(●と上端の間の誤差棒の上)。点が密集する党の見た目のための
