@@ -936,6 +936,17 @@ def _party_colors(plt, parties: list[str]) -> dict:
     return dict(zip(order, plt.cm.tab10(np.linspace(0, 1, max(10, len(order))))))
 
 
+def _log_percent_axis(ax, scale: float = 1.0) -> None:
+    """縦軸を対数にし、1・2・5の目盛りを%で付ける。scaleは値を%に直す倍率。"""
+    from matplotlib.ticker import FuncFormatter, LogLocator, NullLocator
+
+    ax.set_yscale("log")
+    ax.yaxis.set_major_locator(LogLocator(subs=(1, 2, 5)))
+    ax.yaxis.set_minor_locator(NullLocator())
+    # ラベル用の上の余白に100%を超える目盛りが出ても意味がないので消す
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v * scale:g}%" if v * scale <= 100 else ""))
+
+
 def _spread_labels(ys: list[float], gap: float) -> list[float]:
     """右端のラベルの縦位置を、元の順序を保ったまま最小間隔gapまで押し広げる。"""
     order = sorted(range(len(ys)), key=lambda i: ys[i])
@@ -975,7 +986,7 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
         3, 1, figsize=(19, 14), dpi=200, sharex=True,
         gridspec_kw={"height_ratios": [8, 2.6, 0.9], "hspace": 0.06},
     )
-    ends, ymax_by_party = {}, {}
+    ends, ymax_by_party, ymin_by_party = {}, {}, {}
     for party in parties:
         # 最初の衆院選までは衆院の尺度に合わせる手がかりがなく、その時点の値は事前分布と
         # 参院選からの換算のずれに左右されるので描かない
@@ -988,11 +999,15 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
         ax1.plot(xs, ys, color=colors[party], linewidth=2.4, zorder=3)
         ends[party] = ys[-1]
         ymax_by_party[party] = max(ys)
+        ymin_by_party[party] = min(ys)
     drawn = [p for p in parties if p in ends]
     ymax = max(ymax_by_party[p] for p in drawn)
-    # 選挙のラベルを線に重ねないよう、上に余白を取ってそこに置く
-    ax1.set_ylim(0, ymax * 1.3)
-    label_y = _spread_labels([ends[p] for p in drawn], gap=ymax * 0.045)
+    ymin = min(ymin_by_party[p] for p in drawn)
+    # 選挙のラベルを線に重ねないよう、上に余白を取ってそこに置く。余白は対数の目盛りで線の幅の2割
+    span = math.log10(ymax / ymin)
+    ax1.set_ylim(ymin / 10 ** (span * 0.02), ymax * 10 ** (span * 0.2))
+    _log_percent_axis(ax1)
+    label_y = [10 ** v for v in _spread_labels([math.log10(ends[p]) for p in drawn], gap=span * 0.045)]
     for party, ly in zip(drawn, label_y):
         ax1.plot([n_months - 1, n_months - 1 + n_months * 0.012], [ends[party], ly],
                  color=colors[party], linewidth=1.0, zorder=3)
@@ -1000,7 +1015,8 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
                  va="center", ha="left", weight="bold")
     for i, label in events:
         ax1.axvline(i, color="#999999", linewidth=0.8, linestyle="--", zorder=1)
-        ax1.text(i, ymax * 1.29, label, fontsize=11, rotation=90, ha="left", va="top", color="#333333")
+        ax1.text(i, 0.99, label, fontsize=11, rotation=90, ha="left", va="top", color="#333333",
+                 transform=ax1.get_xaxis_transform())
     ax1.set_ylabel("党勢(衆院の議席率の尺度, %)", fontsize=15)
     ax1.tick_params(axis="both", labelsize=13)
     ax1.grid(axis="y", alpha=0.3)
@@ -1099,7 +1115,7 @@ def generate_trend_by_party_chart(result: dict, validation: dict | None = None,
             yp, lo, hi = (to_x(h[k], h["level"]) for k in ("pred", "lo", "hi"))
             ax.errorbar(d, yp, yerr=[[yp - lo], [hi - yp]], fmt="x", color="C3", ms=7, capsize=3, zorder=4)
         ax.set_title(party, fontsize=13)
-        ax.set_ylim(0, 0.85)
+        _log_percent_axis(ax, scale=100)
         ax.grid(alpha=0.3)
         ax.xaxis.set_major_locator(mdates.YearLocator(2))
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
