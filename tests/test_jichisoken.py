@@ -125,7 +125,7 @@ _INDEX_HTML = (
 def test_discover_years_always_refetches_index(monkeypatch):
     calls = []
 
-    def fake_fetch(url, *, force=False, retries=1):
+    def fake_fetch(url, *, force=False, retries=1, wait=True):
         calls.append(force)
         return _INDEX_HTML
 
@@ -138,7 +138,7 @@ def test_discover_years_always_refetches_index(monkeypatch):
 
 
 def test_discover_years_falls_back_to_cache_when_offline(monkeypatch):
-    def fake_fetch(url, *, force=False, retries=1):
+    def fake_fetch(url, *, force=False, retries=1, wait=True):
         if force:
             raise ConnectionError("offline")
         return _INDEX_HTML

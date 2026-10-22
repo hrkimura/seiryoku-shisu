@@ -65,7 +65,7 @@ def _wait_out_shared_block(host: str) -> None:
         time.sleep(remaining)
 
 
-def fetch(url: str, *, force: bool = False, retries: int = 1) -> bytes:
+def fetch(url: str, *, force: bool = False, retries: int = 1, wait: bool = True) -> bytes:
     """URLをダウンロードし、cache/にキャッシュする。二回目以降はキャッシュを返す。
 
     WAFのチャレンジ応答(HTTP 202・x-amzn-waf-actionヘッダ)、および接続そのものが
@@ -80,6 +80,8 @@ def fetch(url: str, *, force: bool = False, retries: int = 1) -> bytes:
         return path.read_bytes()
 
     host = urlparse(url).hostname or ""
+    if not wait and _blocked_until.get(host, 0.0) > time.time():
+        raise WafChallengeError(f"{host}はクールダウン中のため取得しません: {url}")
     _wait_out_shared_block(host)
     for attempt in range(retries + 1):
         _throttle(host)

@@ -90,10 +90,11 @@ def discover_years() -> list[tuple[str, str]]:
     """(年版, ページURL) を新しい順ではなく古い順に返す(合算時に新しい年版で
     上書きするため)。"""
     # 目次だけはキャッシュを使わず毎回取り直す。キャッシュのままだと新しい年版が
-    # 公開されても見つからない。取得に失敗したら手元の目次で続ける。retries=0は、
-    # オフライン時にutil.fetchのWAFクールダウン(11分)を待たないため。
+    # 公開されても見つからない。取得に失敗したら手元の目次で続ける。retries=0とwait=False
+    # は、オフライン時にutil.fetchのWAFクールダウン(11分)を待たないため。wait=Falseが
+    # ないと、1回目の失敗で始まったクールダウンを、同じ実行中の2回目以降の呼び出しが待つ。
     try:
-        raw = fetch(INDEX_URL, force=True, retries=0)
+        raw = fetch(INDEX_URL, force=True, retries=0, wait=False)
     except Exception:
         raw = fetch(INDEX_URL)
     html = raw.decode("utf-8", errors="ignore")

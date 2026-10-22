@@ -1,3 +1,4 @@
+import pytest
 import requests
 
 from seiryoku.fetch import util
@@ -130,3 +131,16 @@ def test_shared_cooldown_avoids_double_wait_for_second_call(monkeypatch, tmp_pat
     # 残りのクールダウン(660 - 60 = 600秒前後)だけ待ち、フルの660秒を待ち直していない
     assert any(500 < s <= 600 for s in new_sleeps)
     assert util._WAF_COOLDOWN_SECONDS not in new_sleeps
+
+
+def test_fetch_without_wait_raises_instead_of_waiting_out_a_block(monkeypatch, tmp_path):
+    clock = _setup(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: calls.append(1) or _FakeResponse(b"x"))
+    util._blocked_until["example.com"] = clock.now + 660
+
+    with pytest.raises(util.WafChallengeError):
+        util.fetch("https://example.com/c", wait=False)
+
+    assert calls == []
+    assert clock.slept == []
