@@ -56,7 +56,7 @@ output/draft_facts_YYYY-MM.txt を読んで、第N回の記事の下書きを no
 - 構成と文体は notes/trend_v2_draft.md に合わせる(です・ます調)。v2の仕組みの説明は繰り返さず、v2を紹介した記事へのリンクで済ませる
 - 毎月の必須の節:
   1. 選挙講評: その月の主な選挙の結果
-  2. 党勢指数v2の更新: 各党の値と前月差の表(値の大きい順)。図1は output/images/YYYY-MM/trend_v2.png を notes/images/daiNkai_trend_v2.png にコピーして使う
+  2. 党勢指数v2の更新: 各党の値と前月差の表(値の大きい順)。図1は output/images/YYYY-MM/trend_v2.png を notes/images/daiNkai_trend_v2.png にコピーして使い、キャプションに1段目の縦軸が対数目盛りであることを書く
   3. 党勢を動かした選挙: 事実データの「党勢を大きく動かしたもの」から、見込みと実際の差が大きかった選挙を挙げ、各党の前月差がどの選挙から来たかを説明する(勝因などの因果は書かない)
   4. 政党支持率: 事実データの全項目を三春さんの記事と同じ略称で表にし、更新日と出典リンクを添える。散布図は output/images/YYYY-MM/trend_v2_vs_support.png を notes/images/daiNkai_trend_v2_vs_support.png にコピーし、点線から大きく外れる党に触れる
   5. 差の散布図: output/images/YYYY-MM/trend_v2_support_diff_*m.png のうち、出ている中でいちばん長い期間のものを notes/images/daiNkai_trend_v2_support_diff.png にコピーし、事実データの「党勢指数v2と政党支持率の…か月差」の相関と順位相関を、点の数と一緒に書く。点が少ないうちは相関の値で結論を出さず、どの党が離れた位置にあるかだけ書く。相関が出ないことを「関係がない」とは書かない(v2の誤差は相関を0に近づけるだけで、検出力が低い)

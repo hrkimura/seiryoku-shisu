@@ -987,6 +987,7 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
         gridspec_kw={"height_ratios": [8, 2.6, 0.9], "hspace": 0.06},
     )
     ends, ymax_by_party, ymin_by_party = {}, {}, {}
+    start = n_months - 1
     for party in parties:
         # 最初の衆院選までは衆院の尺度に合わせる手がかりがなく、その時点の値は事前分布と
         # 参院選からの換算のずれに左右されるので描かない
@@ -997,10 +998,14 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
         xs = [pos[r["tau"]] for r in s]
         ys = [r.get("x_f", r["x"]) * 100 for r in s]
         ax1.plot(xs, ys, color=colors[party], linewidth=2.4, zorder=3)
+        start = min(start, xs[0])
         ends[party] = ys[-1]
         ymax_by_party[party] = max(ys)
         ymin_by_party[party] = min(ys)
     drawn = [p for p in parties if p in ends]
+    # 横軸は線が始まる月(最初の衆院選)から。それより前は2段目・3段目しか描くものがない
+    events = [(i, label) for i, label in events if i >= start]
+    width = n_months - start
     ymax = max(ymax_by_party[p] for p in drawn)
     ymin = min(ymin_by_party[p] for p in drawn)
     # 選挙のラベルを線に重ねないよう、上に余白を取ってそこに置く。余白は対数の目盛りで線の幅の2割
@@ -1009,9 +1014,9 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     _log_percent_axis(ax1)
     label_y = [10 ** v for v in _spread_labels([math.log10(ends[p]) for p in drawn], gap=span * 0.045)]
     for party, ly in zip(drawn, label_y):
-        ax1.plot([n_months - 1, n_months - 1 + n_months * 0.012], [ends[party], ly],
+        ax1.plot([n_months - 1, n_months - 1 + width * 0.012], [ends[party], ly],
                  color=colors[party], linewidth=1.0, zorder=3)
-        ax1.text(n_months - 1 + n_months * 0.015, ly, party, fontsize=14, color=colors[party],
+        ax1.text(n_months - 1 + width * 0.015, ly, party, fontsize=14, color=colors[party],
                  va="center", ha="left", weight="bold")
     for i, label in events:
         ax1.axvline(i, color="#999999", linewidth=0.8, linestyle="--", zorder=1)
@@ -1020,7 +1025,7 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     ax1.set_ylabel("党勢(衆院の議席率の尺度, %)", fontsize=15)
     ax1.tick_params(axis="both", labelsize=13)
     ax1.grid(axis="y", alpha=0.3)
-    ax1.set_xlim(0, n_months - 1 + n_months * 0.13)
+    ax1.set_xlim(start, n_months - 1 + width * 0.13)
     ax1.spines[["top", "right"]].set_visible(False)
 
     totals = np.zeros(n_months)
@@ -1042,7 +1047,7 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     # 凡例の左端を1段目の政党名の書き出しにそろえる
     ax2.legend(handles[::-1], labels[::-1], loc="center left", fontsize=13, frameon=False, handlelength=1.4,
                borderpad=0, borderaxespad=0,
-               bbox_to_anchor=(n_months - 1 + n_months * 0.015, 50), bbox_transform=ax2.transData)
+               bbox_to_anchor=(n_months - 1 + width * 0.015, 50), bbox_transform=ax2.transData)
     for i, _ in events:
         ax2.axvline(i, color="#555555", linewidth=0.8, linestyle="--", zorder=5)
     ax2.set_ylim(0, 100)
@@ -1052,10 +1057,10 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     ax2.spines[["top", "right"]].set_visible(False)
 
     for k, (y, m, name) in enumerate(PM_PERIODS):
-        lo = max(idx(y, m), 0)
+        lo = max(idx(y, m), start)
         hi = idx(*PM_PERIODS[k + 1][:2]) if k + 1 < len(PM_PERIODS) else n_months - 1
         hi = min(hi, n_months - 1)
-        if hi <= 0:
+        if hi <= lo:
             continue
         ax3.axvspan(lo, hi, color=PM_COLORS[k], alpha=0.55, zorder=1)
         ax3.text((lo + hi) / 2, 0.5, name, ha="center", va="center", fontsize=14, color="white", weight="bold")
@@ -1065,7 +1070,7 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     ax3.set_yticks([])
     for spine in ["top", "right", "left"]:
         ax3.spines[spine].set_visible(False)
-    ticks = list(range(0, n_months, 12))
+    ticks = [i for i in range(start, n_months) if months[i][5:7] == "01"]
     if n_months - 1 - ticks[-1] >= 10:
         ticks.append(n_months - 1)
     ax3.set_xticks(ticks)
