@@ -1,0 +1,710 @@
+{
+ "note": "国政の補欠選挙(と2021年4月の参議院広島県選挙区の再選挙)の当選者と届出党派。通常選挙と同時の合併選挙は通常選挙の議席に含まれるので載せない。2018年・2025年・2026年は単独の補欠選挙がなかった。 candidatesは全候補の届出党派・得票(按分票の小数を含む)・選挙結果テンプレートの推薦の欄。",
+ "elections": [
+  {
+   "vote_date": "2019-04-21",
+   "house": "衆議院",
+   "district": "沖縄県第3区",
+   "kind": "補欠選挙",
+   "winner": "屋良朝博",
+   "party": "無所属",
+   "source": "https://ja.wikipedia.org/wiki/2019%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "屋良朝博",
+     "party": "無所属",
+     "votes": 77156.0,
+     "rec": ""
+    },
+    {
+     "name": "島尻安伊子",
+     "party": "自由民主党",
+     "votes": 59428.0,
+     "rec": "公明党・日本維新の会沖縄県総支部"
+    }
+   ]
+  },
+  {
+   "vote_date": "2019-04-21",
+   "house": "衆議院",
+   "district": "大阪府第12区",
+   "kind": "補欠選挙",
+   "winner": "藤田文武",
+   "party": "日本維新の会",
+   "source": "https://ja.wikipedia.org/wiki/2019%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "藤田文武",
+     "party": "日本維新の会",
+     "votes": 60341.0,
+     "rec": ""
+    },
+    {
+     "name": "北川晋平",
+     "party": "自由民主党",
+     "votes": 47025.0,
+     "rec": "公明党"
+    },
+    {
+     "name": "樽床伸二",
+     "party": "無所属",
+     "votes": 35358.0,
+     "rec": ""
+    },
+    {
+     "name": "宮本岳志",
+     "party": "無所属",
+     "votes": 14027.0,
+     "rec": "日本共産党・自由党・社会民主党大阪府連"
+    }
+   ]
+  },
+  {
+   "vote_date": "2019-10-27",
+   "house": "参議院",
+   "district": "埼玉県選挙区",
+   "kind": "補欠選挙",
+   "winner": "上田清司",
+   "party": "無所属",
+   "source": "https://ja.wikipedia.org/wiki/2019%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "上田清司",
+     "party": "無所属",
+     "votes": 1065390.0,
+     "rec": "（自主支援）立憲民主党埼玉県連・国民民主党埼玉県連・自由民主党の一部"
+    },
+    {
+     "name": "立花孝志",
+     "party": "NHKから国民を守る党",
+     "votes": 168289.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2020-04-26",
+   "house": "衆議院",
+   "district": "静岡県第4区",
+   "kind": "補欠選挙",
+   "winner": "深澤陽一",
+   "party": "自由民主党",
+   "source": "https://ja.wikipedia.org/wiki/2020%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "深澤陽一",
+     "party": "自由民主党",
+     "votes": 66881.0,
+     "rec": "公明党推薦"
+    },
+    {
+     "name": "田中健",
+     "party": "無所属",
+     "votes": 38566.398,
+     "rec": "立憲民主党・国民民主党・日本共産党・社会民主党推薦"
+    },
+    {
+     "name": "山口賢三",
+     "party": "無所属",
+     "votes": 1887.0,
+     "rec": ""
+    },
+    {
+     "name": "田中健",
+     "party": "NHKから国民を守る党",
+     "votes": 1747.595,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2021-04-25",
+   "house": "衆議院",
+   "district": "北海道第2区",
+   "kind": "補欠選挙",
+   "winner": "松木謙公",
+   "party": "立憲民主党",
+   "source": "https://ja.wikipedia.org/wiki/2021%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "松木謙公",
+     "party": "立憲民主党",
+     "votes": 59664.0,
+     "rec": "国民民主党・社会民主党・日本共産党北海道委員会"
+    },
+    {
+     "name": "鶴羽佳子",
+     "party": "無所属",
+     "votes": 27355.0,
+     "rec": ""
+    },
+    {
+     "name": "山崎泉",
+     "party": "日本維新の会",
+     "votes": 22459.0,
+     "rec": "新党大地"
+    },
+    {
+     "name": "長友隆典",
+     "party": "無所属",
+     "votes": 15738.0,
+     "rec": ""
+    },
+    {
+     "name": "斉藤忠行",
+     "party": "NHK受信料を支払わない方法を教える党",
+     "votes": 5630.0,
+     "rec": ""
+    },
+    {
+     "name": "小林悟",
+     "party": "無所属",
+     "votes": 5552.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2021-04-25",
+   "house": "参議院",
+   "district": "長野県選挙区",
+   "kind": "補欠選挙",
+   "winner": "羽田次郎",
+   "party": "立憲民主党",
+   "source": "https://ja.wikipedia.org/wiki/2021%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "羽田次郎",
+     "party": "立憲民主党",
+     "votes": 415781.0,
+     "rec": "日本共産党・国民民主党・社会民主党"
+    },
+    {
+     "name": "小松裕",
+     "party": "自由民主党",
+     "votes": 325826.0,
+     "rec": "公明党"
+    },
+    {
+     "name": "神谷幸太郎",
+     "party": "NHK受信料を支払わない方法を教える党",
+     "votes": 17559.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2021-04-25",
+   "house": "参議院",
+   "district": "広島県選挙区",
+   "kind": "再選挙",
+   "winner": "宮口治子",
+   "party": "結集ひろしま",
+   "source": "https://ja.wikipedia.org/wiki/2021%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "宮口治子",
+     "party": "結集ひろしま",
+     "votes": 370860.0,
+     "rec": "立憲民主党・国民民主党・社会民主党・新社会党"
+    },
+    {
+     "name": "西田英範",
+     "party": "自由民主党",
+     "votes": 336924.0,
+     "rec": "公明党"
+    },
+    {
+     "name": "佐藤周一",
+     "party": "無所属",
+     "votes": 20848.0,
+     "rec": ""
+    },
+    {
+     "name": "山本貴平",
+     "party": "NHK受信料を支払わない方法を教える党",
+     "votes": 16114.0,
+     "rec": ""
+    },
+    {
+     "name": "大山宏",
+     "party": "無所属",
+     "votes": 13363.0,
+     "rec": ""
+    },
+    {
+     "name": "玉田憲勲",
+     "party": "無所属",
+     "votes": 8806.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2021-10-24",
+   "house": "参議院",
+   "district": "静岡県選挙区",
+   "kind": "補欠選挙",
+   "winner": "山﨑真之輔",
+   "party": "無所属",
+   "source": "https://ja.wikipedia.org/wiki/2021%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "山﨑真之輔",
+     "party": "無所属",
+     "votes": 650789.0,
+     "rec": "立憲民主党・国民民主党推薦"
+    },
+    {
+     "name": "若林洋平",
+     "party": "自由民主党",
+     "votes": 602780.0,
+     "rec": "公明党推薦"
+    },
+    {
+     "name": "鈴木千佳",
+     "party": "日本共産党",
+     "votes": 116554.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2021-10-24",
+   "house": "参議院",
+   "district": "山口県選挙区",
+   "kind": "補欠選挙",
+   "winner": "北村経夫",
+   "party": "自由民主党",
+   "source": "https://ja.wikipedia.org/wiki/2021%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "北村経夫",
+     "party": "自由民主党",
+     "votes": 307894.0,
+     "rec": "公明党推薦"
+    },
+    {
+     "name": "河合喜代",
+     "party": "日本共産党",
+     "votes": 92532.0,
+     "rec": "社会民主党山口県連合推薦"
+    },
+    {
+     "name": "へずまりゅう",
+     "party": "NHKと裁判してる党弁護士法72条違反で",
+     "votes": 6809.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2022-04-24",
+   "house": "参議院",
+   "district": "石川県選挙区",
+   "kind": "補欠選挙",
+   "winner": "宮本周司",
+   "party": "自由民主党",
+   "source": "https://ja.wikipedia.org/wiki/2022%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "宮本周司",
+     "party": "自由民主党",
+     "votes": 189503.0,
+     "rec": "公明党推薦"
+    },
+    {
+     "name": "小山田経子",
+     "party": "立憲民主党",
+     "votes": 59906.0,
+     "rec": "社会民主党推薦"
+    },
+    {
+     "name": "西村祐士",
+     "party": "日本共産党",
+     "votes": 18158.0,
+     "rec": ""
+    },
+    {
+     "name": "齊藤健一郎",
+     "party": "NHK受信料を支払わない国民を守る党",
+     "votes": 9430.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2023-04-23",
+   "house": "衆議院",
+   "district": "山口県第4区",
+   "kind": "補欠選挙",
+   "winner": "吉田真次",
+   "party": "自由民主党",
+   "source": "https://ja.wikipedia.org/wiki/2023%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "吉田真次",
+     "party": "自由民主党",
+     "votes": 51961.0,
+     "rec": "公明党推薦"
+    },
+    {
+     "name": "有田芳生",
+     "party": "立憲民主党",
+     "votes": 25595.0,
+     "rec": ""
+    },
+    {
+     "name": "大野頼子",
+     "party": "無所属",
+     "votes": 2381.0,
+     "rec": ""
+    },
+    {
+     "name": "渡部亜衣",
+     "party": "政治家女子48党",
+     "votes": 1186.0,
+     "rec": ""
+    },
+    {
+     "name": "竹本秀之",
+     "party": "無所属",
+     "votes": 734.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2023-04-23",
+   "house": "衆議院",
+   "district": "和歌山県第1区",
+   "kind": "補欠選挙",
+   "winner": "林佑美",
+   "party": "日本維新の会",
+   "source": "https://ja.wikipedia.org/wiki/2023%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "林佑美",
+     "party": "日本維新の会",
+     "votes": 61720.0,
+     "rec": ""
+    },
+    {
+     "name": "門博文",
+     "party": "自由民主党",
+     "votes": 55657.0,
+     "rec": "公明党推薦"
+    },
+    {
+     "name": "国重秀明",
+     "party": "日本共産党",
+     "votes": 11178.0,
+     "rec": "社会民主党和歌山県連合支持"
+    },
+    {
+     "name": "山本貴平",
+     "party": "政治家女子48党",
+     "votes": 1476.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2023-04-23",
+   "house": "衆議院",
+   "district": "千葉県第5区",
+   "kind": "補欠選挙",
+   "winner": "英利アルフィヤ",
+   "party": "自由民主党",
+   "source": "https://ja.wikipedia.org/wiki/2023%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "英利アルフィヤ",
+     "party": "自由民主党",
+     "votes": 50578.0,
+     "rec": "公明党推薦"
+    },
+    {
+     "name": "矢崎堅太郎",
+     "party": "立憲民主党",
+     "votes": 45635.399,
+     "rec": ""
+    },
+    {
+     "name": "岡野純子",
+     "party": "国民民主党",
+     "votes": 24842.0,
+     "rec": ""
+    },
+    {
+     "name": "岸野智康",
+     "party": "日本維新の会",
+     "votes": 22952.0,
+     "rec": ""
+    },
+    {
+     "name": "斉藤和子",
+     "party": "日本共産党",
+     "votes": 12360.0,
+     "rec": ""
+    },
+    {
+     "name": "星健太郎",
+     "party": "無所属",
+     "votes": 6561.599,
+     "rec": ""
+    },
+    {
+     "name": "織田三江",
+     "party": "政治家女子48党",
+     "votes": 2463.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2023-04-23",
+   "house": "衆議院",
+   "district": "山口県第2区",
+   "kind": "補欠選挙",
+   "winner": "岸信千世",
+   "party": "自由民主党",
+   "source": "https://ja.wikipedia.org/wiki/2023%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "岸信千世",
+     "party": "自由民主党",
+     "votes": 61369.0,
+     "rec": "公明党推薦"
+    },
+    {
+     "name": "平岡秀夫",
+     "party": "無所属",
+     "votes": 55601.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2023-04-23",
+   "house": "参議院",
+   "district": "大分県選挙区",
+   "kind": "補欠選挙",
+   "winner": "白坂亜紀",
+   "party": "自由民主党",
+   "source": "https://ja.wikipedia.org/wiki/2023%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "白坂亜紀",
+     "party": "自由民主党",
+     "votes": 196122.0,
+     "rec": "公明党推薦"
+    },
+    {
+     "name": "吉田忠智",
+     "party": "立憲民主党",
+     "votes": 195781.0,
+     "rec": "日本共産党・社会民主党支持"
+    }
+   ]
+  },
+  {
+   "vote_date": "2023-10-22",
+   "house": "衆議院",
+   "district": "長崎県第4区",
+   "kind": "補欠選挙",
+   "winner": "金子容三",
+   "party": "自由民主党",
+   "source": "https://ja.wikipedia.org/wiki/2023%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "金子容三",
+     "party": "自由民主党",
+     "votes": 53915.0,
+     "rec": "公明党推薦"
+    },
+    {
+     "name": "末次精一",
+     "party": "立憲民主党",
+     "votes": 46899.0,
+     "rec": "社会民主党推薦"
+    }
+   ]
+  },
+  {
+   "vote_date": "2023-10-22",
+   "house": "参議院",
+   "district": "徳島県・高知県選挙区",
+   "kind": "補欠選挙",
+   "winner": "広田一",
+   "party": "無所属",
+   "source": "https://ja.wikipedia.org/wiki/2023%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "広田一",
+     "party": "無所属",
+     "votes": 233250.0,
+     "rec": ""
+    },
+    {
+     "name": "西内健",
+     "party": "自由民主党",
+     "votes": 142036.0,
+     "rec": "公明党推薦"
+    }
+   ]
+  },
+  {
+   "vote_date": "2024-04-28",
+   "house": "衆議院",
+   "district": "島根県第1区",
+   "kind": "補欠選挙",
+   "winner": "亀井亜紀子",
+   "party": "立憲民主党",
+   "source": "https://ja.wikipedia.org/wiki/2024%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "亀井亜紀子",
+     "party": "立憲民主党",
+     "votes": 82691.0,
+     "rec": ""
+    },
+    {
+     "name": "錦織功政",
+     "party": "自由民主党",
+     "votes": 57897.0,
+     "rec": "公明党推薦"
+    }
+   ]
+  },
+  {
+   "vote_date": "2024-04-28",
+   "house": "衆議院",
+   "district": "長崎県第3区",
+   "kind": "補欠選挙",
+   "winner": "山田勝彦",
+   "party": "立憲民主党",
+   "source": "https://ja.wikipedia.org/wiki/2024%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "山田勝彦",
+     "party": "立憲民主党",
+     "votes": 53381.0,
+     "rec": "社会民主党推薦"
+    },
+    {
+     "name": "井上翔一朗",
+     "party": "日本維新の会",
+     "votes": 24709.0,
+     "rec": "教育無償化を実現する会推薦"
+    }
+   ]
+  },
+  {
+   "vote_date": "2024-04-28",
+   "house": "衆議院",
+   "district": "東京都第15区",
+   "kind": "補欠選挙",
+   "winner": "酒井菜摘",
+   "party": "立憲民主党",
+   "source": "https://ja.wikipedia.org/wiki/2024%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "酒井菜摘",
+     "party": "立憲民主党",
+     "votes": 49476.0,
+     "rec": "日本共産党・社会民主党支援"
+    },
+    {
+     "name": "須藤元気",
+     "party": "無所属",
+     "votes": 29669.0,
+     "rec": ""
+    },
+    {
+     "name": "金澤結衣",
+     "party": "日本維新の会",
+     "votes": 28461.0,
+     "rec": "教育無償化を実現する会推薦"
+    },
+    {
+     "name": "飯山陽",
+     "party": "日本保守党",
+     "votes": 24264.0,
+     "rec": ""
+    },
+    {
+     "name": "乙武洋匡",
+     "party": "無所属",
+     "votes": 19655.0,
+     "rec": "国民民主党・都民ファーストの会推薦"
+    },
+    {
+     "name": "吉川里奈",
+     "party": "参政党",
+     "votes": 8639.0,
+     "rec": ""
+    },
+    {
+     "name": "秋元司",
+     "party": "無所属",
+     "votes": 8061.0,
+     "rec": ""
+    },
+    {
+     "name": "福永活也",
+     "party": "NHKから国民を守る党",
+     "votes": 1410.0,
+     "rec": ""
+    },
+    {
+     "name": "根本良輔",
+     "party": "つばさの党",
+     "votes": 1110.0,
+     "rec": ""
+    }
+   ]
+  },
+  {
+   "vote_date": "2024-10-27",
+   "house": "参議院",
+   "district": "岩手県選挙区",
+   "kind": "補欠選挙",
+   "winner": "木戸口英司",
+   "party": "立憲民主党",
+   "source": "https://ja.wikipedia.org/wiki/2024%E5%B9%B4%E6%97%A5%E6%9C%AC%E3%81%AE%E8%A3%9C%E6%AC%A0%E9%81%B8%E6%8C%99",
+   "candidates": [
+    {
+     "name": "木戸口英司",
+     "party": "立憲民主党",
+     "votes": 334914.0,
+     "rec": "社会民主党岩手県連推薦"
+    },
+    {
+     "name": "田中亜弓",
+     "party": "無所属",
+     "votes": 109978.0,
+     "rec": ""
+    },
+    {
+     "name": "吉田利也",
+     "party": "参政党",
+     "votes": 48214.0,
+     "rec": ""
+    },
+    {
+     "name": "松島弘典",
+     "party": "幸福実現党",
+     "votes": 9015.0,
+     "rec": ""
+    },
+    {
+     "name": "小田々豊",
+     "party": "世問う国民党",
+     "votes": 5810.0,
+     "rec": ""
+    }
+   ]
+  }
+ ]
+}

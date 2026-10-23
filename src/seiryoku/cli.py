@@ -129,11 +129,17 @@ def _update_support_analysis(history: list[dict]) -> dict:
 
 
 def _update_trend_v2(image_dir: Path) -> dict:
-    """党勢指数v2を計算し、図を描いて、記事の事実データに載せる節を返す。補間の検証は
-    数時間かかるので月次では回さず、図2には最新の検証の結果を使う。失敗しても月次実行は止めない。"""
-    from . import charts
+    """党勢指数v3を計算し、図を描いて、記事の事実データに載せる節を返す。補間の検証は
+    数時間かかるので月次では回さず、図2には最新の検証の結果を使う。失敗しても月次実行は止めない。
+    議会補選の取り込みに失敗したときは、前回までに保存した補選で計算する。"""
+    from . import by_elections, charts
     from . import state_space_glm as glm
 
+    by_election_error = None
+    try:
+        by_elections.build_gikai_cache(refresh=True)
+    except Exception as e:
+        by_election_error = f"{type(e).__name__}: {e}"
     try:
         res = glm.run()
         result = res["result"]
@@ -152,7 +158,8 @@ def _update_trend_v2(image_dir: Path) -> dict:
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
     return {**glm.month_facts(result), "refit_reason": res["refit_reason"],
-            "validation_tau": validation["tau"] if validation else None, "support_diff": diffs}
+            "validation_tau": validation["tau"] if validation else None, "support_diff": diffs,
+            "by_election_error": by_election_error}
 
 
 def run() -> dict:
@@ -257,10 +264,12 @@ def _print_support_summary(sa: dict) -> None:
 
 
 def _print_trend_summary(t: dict) -> None:
-    print("\n党勢指数v2:")
+    print("\n党勢指数v3:")
     if t.get("error"):
         print(f"  [失敗] {t['error']}")
         return
+    if t.get("by_election_error"):
+        print(f"  [要確認] 議会補選の取り込みに失敗し、前回までの補選で計算した: {t['by_election_error']}")
     for party, r in sorted(t["parties"].items(), key=lambda kv: -kv[1]["x"]):
         ch = f"{r['change'] * 100:+.1f}" if r["change"] is not None else "—"
         print(f"  {party}: {r['x'] * 100:.1f}%(前月差 {ch})")

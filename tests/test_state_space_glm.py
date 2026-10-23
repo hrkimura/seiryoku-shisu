@@ -202,6 +202,21 @@ def test_interpolation_check_can_drop_a_local_level():
     assert [r["pred"] for r in dropped["A"]] != [r["pred"] for r in full["A"]]
 
 
+def test_online_check_does_not_use_data_from_the_election_day_onward():
+    events = _simulate(n_days=4 * 365, seed=5)
+    nat = sorted({e.vote_date for e in events if e.level == "衆院選"})
+    shu = [p for d in nat for p in _pts(2.0, 1.0, (d,))]
+    san = _pts(1.5, 0.6, (date(2016, 7, 10), date(2019, 7, 21), date(2022, 7, 10)))
+    full = glm.national_online_check({"A": glm.glm_observations(events, "A", START)}, shu, san, workers=1)
+    assert [r["vote_date"] for r in full["A"]] == [d.isoformat() for d in nat[1:]]
+    assert all(r["lo"] <= r["pred"] <= r["hi"] and r["q"] > 0 for r in full["A"])
+    # 2回目の国政選挙の当日の地方選挙と、それ以降の地方選挙の結果を変えても、その選挙の予測は変わらない
+    changed = [Event(e.vote_date, e.level, e.P, e.n, {"A": e.P - e.shares.get("A", 0.0)}, e.name)
+               if e.vote_date >= nat[1] and e.level not in ss.NATIONAL_LEVELS else e for e in events]
+    res = glm.national_online_check({"A": glm.glm_observations(changed, "A", START)}, shu, san, workers=1)
+    assert res["A"][0]["pred"] == pytest.approx(full["A"][0]["pred"])
+
+
 def test_level_movement_sums_the_absolute_updates_by_month_and_level():
     events = _simulate(n_days=365, seed=6)
     obs = glm.glm_observations(events, "A", START)
@@ -377,10 +392,20 @@ def test_refit_is_triggered_by_a_national_election_after_the_saved_parameters(tm
               Event(d + timedelta(days=30), "市区町村議会", 1.0, 10.0, {"A": 0.3}, "m")]
     assert glm.refit_reason(events, path) is not None
     p = glm.GlmParams(q_x=0.02, phi={}, ell=0.7)
-    glm.save_params(path, {"A": p}, {"estimated_at": "2025-08-31", "last_national": glm.latest_national(events)})
+    glm.save_params(path, {"A": p}, {"model": glm.MODEL, "estimated_at": "2025-08-31",
+                                     "last_national": glm.latest_national(events)})
     assert glm.refit_reason(events, path) is None
     events.append(Event(date(2026, 2, 8), "衆院選", 1e8, 465.0, {"A": 0.4}, ""))
     assert "2026-02-08" in glm.refit_reason(events, path)
+
+
+def test_refit_is_triggered_by_parameters_estimated_for_another_model(tmp_path):
+    path = tmp_path / "params.json"
+    d = date(2025, 7, 20)
+    events = [Event(d, "参院選", 1e8, 125.0, {"A": 0.3}, "")]
+    p = glm.GlmParams(q_x=0.02, phi={}, ell=0.7)
+    glm.save_params(path, {"A": p}, {"estimated_at": "2025-08-31", "last_national": "2025-07-20"})
+    assert glm.MODEL in glm.refit_reason(events, path)
 
 
 def test_binomial_national_error_is_wider_for_a_party_with_few_seats():

@@ -23,6 +23,7 @@ from scipy.optimize import minimize
 from scipy.special import betaln, psi, zeta
 
 from . import state_space as ss
+from .by_elections import BY_LEVELS, NATIONAL_BY_LEVELS, NATIONAL_VOTE_BY, SANGIIN_BY
 from .trend import Event, first_appearance
 
 PRIOR_VAR_Z = 10.0
@@ -36,14 +37,15 @@ COUNCIL_LEVELS = ("市区町村議会", "都道府県議会")
 
 def sangiin_link(shu: list, san: list, before: date | None = None) -> dict:
     """衆参の議席と得票の曲線から、参院選の観測の負荷と水準差の事前分布を決める。
-    logit x_参=(k_参/k_衆)(z-c_衆)+c_参。"""
+    logit x_参=(k_参/k_衆)(z-c_衆)+c_参。vote_loadは得票率の観測の負荷1/k_衆
+    (logit v=(z-c_衆)/k_衆、切片は階層の水準差が受け持つ)。"""
     if before is not None:
         shu = [p for p in shu if p.vote_date < before]
         san = [p for p in san if p.vote_date < before]
     a, b = ss.seat_vote_curve(shu), ss.seat_vote_curve(san)
     load = b.k / a.k
     return {"san_load": load, "san_offset": b.c - load * a.c,
-            "san_prior_var": b.resid_var + load ** 2 * a.resid_var}
+            "san_prior_var": b.resid_var + load ** 2 * a.resid_var, "vote_load": 1 / a.k}
 
 
 @dataclass
@@ -61,11 +63,19 @@ def glm_observations(events: list[Event], party: str, start: date, filter_levels
     政党がほとんど議席を得ない階層も含める。
     首長選は使わない。党派は推薦・支持の名簿から取るしかなく、名簿の公開は1年以上遅れ、
     その時期も自治体の系統ごとにばらばらだからである。国政選挙の補間の精度は、首長選を
-    除いても落ちない。"""
-    events = [e for e in events if e.level in ss.NATIONAL_LEVELS or e.level in COUNCIL_LEVELS]
+    除いても落ちない。補欠選挙(by_elections)は、イベントに含まれていれば通常選挙と別の階層として使う。
+    国政の補選の得票率は、その党が候補を立てた選挙だけを観測にし、yに得票率をそのまま入れる。"""
+    votes = [e for e in events if e.level == NATIONAL_VOTE_BY and e.vote_date >= start and 0 < e.shares.get(party, 0.0) < 1]
+    events = [e for e in events if e.level in ss.NATIONAL_LEVELS or e.level in COUNCIL_LEVELS
+              or (e.level in BY_LEVELS and e.level != NATIONAL_VOTE_BY)]
     obs = ss.party_observations(events, party, start, filter_levels=filter_levels)
-    return GlmObservations(t=obs.t, level=obs.level, k=obs.y * obs.n_eff, n=obs.n_eff,
-                           y=obs.y, events=obs.events)
+    t = np.concatenate([obs.t, [ss._t(e.vote_date) for e in votes]])
+    y = np.concatenate([obs.y, [e.shares[party] for e in votes]])
+    n = np.concatenate([obs.n_eff, np.ones(len(votes))])
+    order = np.argsort(t, kind="stable")
+    level, evs = obs.level + [e.level for e in votes], obs.events + votes
+    return GlmObservations(t=t[order], level=[level[i] for i in order], k=(y * n)[order], n=n[order],
+                           y=y[order], events=[evs[i] for i in order])
 
 
 def party_loading(obs: GlmObservations, seat_vote: list, seat_vote_san: list, party: str,
@@ -100,7 +110,7 @@ def party_loading(obs: GlmObservations, seat_vote: list, seat_vote_san: list, pa
         return None
     v = latest[1]
     local = [i for i, e in enumerate(obs.events)
-             if e.level not in ss.NATIONAL_LEVELS and obs.n[i] > 1 and e.vote_date < before]
+             if e.level in COUNCIL_LEVELS and obs.n[i] > 1 and e.vote_date < before]
     n = float(obs.n[local].sum()) if local else 0.0
     if n == 0:
         return None
@@ -131,6 +141,9 @@ class GlmParams:
     san_offset: float = 0.0
     san_prior_var: float = PRIOR_VAR_ALPHA
     sigma_national: float | None = None
+    # 国政の補選の得票率の観測logit v=vote_load*z+alpha+e、eの分散がvote_var(sangiin_link参照)
+    vote_load: float = 1.0
+    vote_var: float = 0.0
     prior_var: float = PRIOR_VAR_Z
     # 国政選挙にだけ現れる党勢の部分z_Nのランダムウォークの分散。正なら状態の末尾にz_Nを加え、
     # 国政の党勢をz+z_N、地方選挙の負荷はzだけにかける。z_Nは始点で0とする(水準はzが持つ)。
@@ -295,10 +308,18 @@ def run_filter(obs: GlmObservations, params: GlmParams, until: float | None = No
         j = idx.get(lv)
         if j is not None:
             h[j] = 1.0
-        national = lv in ss.NATIONAL_LEVELS
-        if national:
+        # 得票率の観測は国政選挙と同じく正規分布で、地方の負荷も自治体の地盤も持たない
+        national = lv in ss.NATIONAL_LEVELS or lv == NATIONAL_VOTE_BY
+        if lv == NATIONAL_VOTE_BY:
+            h += params.vote_load * g_nat
+            y_nat, sd_nat = _logit(obs.y[i]), math.sqrt(params.vote_var)
+        elif national:
             h += (params.san_load if lv == SANGIIN else 1.0) * g_nat
             y_nat, sd_nat = national_logit(obs.k[i], obs.n[i], params.sigma_national)
+        elif lv in NATIONAL_BY_LEVELS:
+            # 国政の補選は国政の党勢を1つの選挙区で測る。負荷は地方のgammaではなく国政選挙と同じにし、
+            # 選挙区ごとの偏りと小選挙区の議席と得票の関係はalphaと二項分布が受け持つ
+            h += (params.san_load if lv == SANGIIN_BY else 1.0) * g_nat
         else:
             h[0] = params.ell
         r = None if national else rows.get((lv, obs.events[i].name))
@@ -404,6 +425,10 @@ def fit_params(obs: GlmObservations, ell: float | None = None, until: float | No
     if ell is None:
         z0 += [math.log(0.5)]
         bounds += [(math.log(0.05), math.log(3.0))]
+    votes = NATIONAL_VOTE_BY in obs.level
+    if votes:
+        z0 += [math.log(0.1)]
+        bounds += [(math.log(1e-4), math.log(10.0))]
     if national_dev:
         z0 += [math.log(0.01)]
         bounds += [(-25, math.log(10.0))]
@@ -422,7 +447,11 @@ def fit_params(obs: GlmObservations, ell: float | None = None, until: float | No
         if ell is None:
             ell_v = math.exp(z[k])
             k += 1
-        return GlmParams(q_x=math.exp(z[0]), phi={lv: math.exp(-z[1 + (i if P > 1 else 0)]) for i, lv in enumerate(dispersed)} if P else {},
+        vote_var = 0.0
+        if votes:
+            vote_var = math.exp(z[k])
+            k += 1
+        return GlmParams(vote_var=vote_var, q_x=math.exp(z[0]), phi={lv: math.exp(-z[1 + (i if P > 1 else 0)]) for i, lv in enumerate(dispersed)} if P else {},
                          ell=ell_v, slope=slope, jump_rate=jump_rate, jump_var=jump_var, tau2=tau2,
                          sigma_national=sigma_national, prior_var=prior_var,
                          q_nat=math.exp(z[k]) if national_dev else 0.0, **(san or {}))
@@ -540,6 +569,45 @@ def national_interpolation_check(obs_by_party: dict[str, GlmObservations], seat_
     return results
 
 
+def national_online_check(obs_by_party: dict[str, GlmObservations], seat_vote: list, seat_vote_san: list,
+                          workers: int | None = None,
+                          drop_levels: frozenset[str] = frozenset()) -> dict[str, list[dict]]:
+    """各国政選挙を、その投票日より前のデータだけで推定したモデルで予測する(月次の本番と同じ
+    オンラインの使い方)。負荷、参院選のつなぎ、全党共通のqもその日より前のデータで決め直す。
+    投票日が同じ地方選挙も使わない。結果の形はnational_interpolation_checkと同じ。"""
+    from concurrent.futures import ProcessPoolExecutor
+
+    obs_by_party = {p: _subset(o, np.array([lv not in drop_levels for lv in o.level]))
+                    for p, o in obs_by_party.items()}
+    national = {p: np.array([lv in ss.NATIONAL_LEVELS for lv in o.level]) for p, o in obs_by_party.items()}
+    held = {p: {o.events[i].vote_date: i for i in np.flatnonzero(national[p])[1:]} for p, o in obs_by_party.items()}
+    results: dict[str, list[dict]] = {p: [] for p in obs_by_party}
+    with ProcessPoolExecutor(workers) as ex:
+        for d in sorted(set().union(*held.values())):
+            subs, ells, kw = {}, {}, {}
+            for party, o in obs_by_party.items():
+                if d not in held[party]:
+                    continue
+                ell = party_loading(o, seat_vote, seat_vote_san, party, d)
+                if ell is None:
+                    continue
+                subs[party], ells[party] = _subset(o, np.array([e.vote_date < d for e in o.events])), ell
+                kw[party] = {"muni": True, "san": sangiin_link(seat_vote, seat_vote_san, d)}
+            if not subs:
+                continue
+            q, params_by_party = pooled_fit(ex, subs, ells, kw)
+            for party, params in params_by_party.items():
+                o, sub, i = obs_by_party[party], subs[party], held[party][d]
+                e = o.events[i]
+                mu, s = predict_national(sub, params, o.t[i], e.level)
+                y_logit, sd_nat = national_logit(o.k[i], o.n[i], params.sigma_national)
+                s_tot = math.hypot(s, sd_nat)
+                results[party].append({"vote_date": d.isoformat(), "level": e.level, "y": float(o.y[i]),
+                                       "pred": _expit(mu), "lo": _expit(mu - 2 * s_tot),
+                                       "hi": _expit(mu + 2 * s_tot), "z": (y_logit - mu) / s_tot, "q": q})
+    return results
+
+
 def interpolation_summary(results: dict[str, list[dict]]) -> dict:
     """補間の結果の要約。誤差は占有率の尺度。"""
     rows = [r for rs in results.values() for r in rs]
@@ -641,6 +709,8 @@ def national_forecast_check(obs: GlmObservations, seat_vote: list, since: date =
 
 
 PARAMS_PATH = Path(__file__).resolve().parents[2] / "data" / "trend_glm_params.json"
+# 保存したパラメータがどの観測の組み合わせで推定したものか。v3は国政・地方議会の補選(議席)を加えた形
+MODEL = "v3"
 
 
 def save_params(path: Path, params: dict[str, GlmParams], meta: dict,
@@ -667,7 +737,10 @@ def refit_reason(events: list[Event], path: Path = PARAMS_PATH) -> str | None:
     """パラメータを推定し直すべき理由。保存したときより新しい国政選挙がデータにあれば推定し直す。"""
     if not path.exists():
         return "保存したパラメータがない"
-    saved = json.loads(path.read_text())["meta"].get("last_national")
+    meta = json.loads(path.read_text())["meta"]
+    if meta.get("model") != MODEL:
+        return f"保存したパラメータが{MODEL}の観測で推定したものでない"
+    saved = meta.get("last_national")
     now = latest_national(events)
     if now is not None and (saved is None or now > saved):
         return f"保存後の国政選挙({now})がある"
@@ -741,7 +814,7 @@ def estimate_all(obs_by_party: dict[str, GlmObservations], ells: dict[str, float
 
 
 def month_facts(result: dict, top: int = 10) -> dict:
-    """記事の事実データに載せる党勢指数v2の節。各党の最新月の値(その月までの選挙による値)と
+    """記事の事実データに載せる党勢指数v3の節。各党の最新月の値(その月までの選挙による値)と
     前月からの変化、その月の選挙のうち党勢を占有率の尺度で大きく動かしたもの。dzの党ごとの和は、
     最新月のxのlogitの前月からの変化にちょうど等しい。"""
     parties, impacts = {}, []
@@ -761,7 +834,7 @@ def month_facts(result: dict, top: int = 10) -> dict:
 def main(argv: list[str] | None = None) -> None:
     import argparse
 
-    ap = argparse.ArgumentParser(description="logitの状態とベータ二項分布の観測による党勢の現在推定")
+    ap = argparse.ArgumentParser(description="logitの状態とベータ二項分布の観測による党勢の現在推定(党勢指数v3)")
     ap.add_argument("--refit", action="store_true",
                     help="パラメータを必ず推定し直して保存する。指定しなくても、保存後の国政選挙が"
                          "データにあれば推定し直す。それ以外は保存済みのパラメータでフィルタと平滑化だけを行う")
@@ -776,16 +849,21 @@ def main(argv: list[str] | None = None) -> None:
 
 def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
         workers: int | None = None) -> dict:
-    """月次の党勢指数v2を計算して保存する。保存後の国政選挙がデータにあればパラメータを
-    推定し直す。戻り値は出力の中身(result)、保存先(path)、検証の保存先(validation_path)、
+    """月次の党勢指数v3を計算して保存する。v3はv2の観測に国政・地方議会の補選の議席を加えたもの
+    (補選の得票率は、国政選挙の補間を良くしなかったので使わない)。保存後の国政選挙がデータにあれば
+    パラメータを推定し直す。戻り値は出力の中身(result)、保存先(path)、検証の保存先(validation_path)、
     推定し直した理由(refit_reason、推定し直さなければNone)。"""
-    from .trend import OUTPUT_DIR, load_events, month_ends
+    from .by_elections import load_events_with_by_elections
+    from .trend import OUTPUT_DIR, month_ends
 
-    events, _ = load_events()
-    first = first_appearance(events)
-    last = events[-1].vote_date
+    events, _ = load_events_with_by_elections()
+    events = [e for e in events if e.level != NATIONAL_VOTE_BY]
+    # 追う党と各党の始まりは、補選を除いた選挙で決める(補選だけに出た党は追わない)
+    regular = [e for e in events if e.level not in BY_LEVELS]
+    first = first_appearance(regular)
+    last = regular[-1].vote_date
     tau = month_ends((last.year, last.month), (last.year, last.month))[-1]
-    obs_by_party = {p: glm_observations(events, p, first[p], filter_levels=False) for p in ss.tracked_parties(events)}
+    obs_by_party = {p: glm_observations(events, p, first[p], filter_levels=False) for p in ss.tracked_parties(regular)}
     reason = "--refitの指定" if refit else refit_reason(events)
     shu = ss.load_seat_vote_points()
     san = ss.load_seat_vote_points(house="sangiin")
@@ -805,7 +883,7 @@ def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
             ells[party] = ell
         fit_kw = {p: {"muni": True, "san": sangiin_link(shu, san)} for p in ells}
         params_by_party, dev_by_party = estimate_all(obs_by_party, ells, fit_kw, workers, national_dev)
-        meta = {"estimated_at": tau.isoformat(), "last_event": last.isoformat(),
+        meta = {"model": MODEL, "estimated_at": tau.isoformat(), "last_event": last.isoformat(),
                 "last_national": latest_national(events)}
         save_params(PARAMS_PATH, params_by_party, meta, dev_by_party)
         print(PARAMS_PATH, flush=True)

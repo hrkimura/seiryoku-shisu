@@ -32,7 +32,7 @@ LEVEL_COLORS = ["#c0392b", "#e67e22", "#8e44ad", "#2980b9", "#27ae60", "#7f8c8d"
 # LEVEL_ORDERはlevel_weight_shareの実データキー(monthly_index.py参照)と一致させる
 # 必要があるため変更できない。表示名だけをここで日本語として正式な言い方に直す。
 LEVEL_DISPLAY_NAMES = {"衆院選": "衆議院", "参院選": "参議院"}
-# 党勢指数v2の動きの内訳の色。v2では市区町村議会が大半を占めるので、v1の灰色だと背景に見える
+# 党勢指数v3の動きの内訳の色。v2以降は市区町村議会が大半を占めるので、v1の灰色だと背景に見える
 TREND_LEVEL_COLORS = {"衆院選": "#c0392b", "参院選": "#e67e22", "都道府県議会": "#2980b9", "市区町村議会": "#27ae60"}
 
 # 首相の在任期間(発足月)。出典: 首相官邸・各内閣公式発表。更新頻度が低いため
@@ -871,7 +871,7 @@ TREND_PARTY_ORDER = ["自由民主党", "立憲民主党", "国民民主党", "�
 
 
 def generate_trend_support_diff_scatter(diffs: dict, out_path: Path) -> Path:
-    """党勢指数v2の差(縦)と、同じ期間の政党支持率の差(横)の散布図。点は党×期間で、
+    """党勢指数v3の差(縦)と、同じ期間の政党支持率の差(横)の散布図。点は党×期間で、
     diffsはsupport_analysis.trend_support_diffsの戻り値。"""
     plt = _setup_fonts()
     pts = diffs["points"]
@@ -891,7 +891,7 @@ def generate_trend_support_diff_scatter(diffs: dict, out_path: Path) -> Path:
     span = f"{periods[0][0]}→{periods[-1][1]}" if periods else ""
     h = diffs.get("horizon", 1)
     ax.set_xlabel(f"政党支持率の{h}か月差(無党派を除いて再計算, ポイント)", fontsize=13)
-    ax.set_ylabel(f"党勢指数v2の{h}か月差(ポイント)", fontsize=13)
+    ax.set_ylabel(f"党勢指数v3の{h}か月差(ポイント)", fontsize=13)
     lines = [f"{len(periods)}期間・{diffs['n']}点({span})"]
     if diffs.get("pearson"):
         c = diffs["pearson"]
@@ -958,7 +958,7 @@ def _spread_labels(ys: list[float], gap: float) -> list[float]:
 
 
 def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
-    """党勢指数v2の図。1段目は全政党の党勢の推移、2段目は党勢の推定値の動き(|Δz|の合計)の
+    """党勢指数v3の図。1段目は全政党の党勢の推移、2段目は党勢の推定値の動き(|Δz|の合計)の
     選挙の種類ごとの内訳、最下段は首相の在任期間。resultはstate_space_glmの出力。
     1段目はその月までのデータだけによる値(x_f)で描く。平滑化の値は大きな国政選挙の跳びを
     前の月に割り振るので、選挙の前から党勢が動いていたように見えてしまう。"""
@@ -1030,10 +1030,14 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
 
     totals = np.zeros(n_months)
     level_data = {lv: [0.0] * n_months for lv in LEVEL_ORDER}
+    from .by_elections import PARENT_LEVEL
+
     for party in parties:
         for r in result["parties"][party].get("movement", []):
-            for lv in LEVEL_ORDER:
-                level_data[lv][pos[r["tau"]]] += r.get(lv, 0.0)
+            for lv, v in r.items():
+                lv = PARENT_LEVEL.get(lv, lv)
+                if lv in level_data:
+                    level_data[lv][pos[r["tau"]]] += v
     for lv in LEVEL_ORDER:
         totals += np.array(level_data[lv])
     levels = [lv for lv in LEVEL_ORDER if any(level_data[lv])]
@@ -1085,7 +1089,7 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
 
 def generate_trend_by_party_chart(result: dict, validation: dict | None = None,
                                   out_path: Path = TREND_BY_PARTY_OUT_PATH) -> Path:
-    """党勢指数v2の政党別の図(横一列)。帯は±2標準偏差、点は国政選挙の結果(参院選は衆院の
+    """党勢指数v3の政党別の図(横一列)。帯は±2標準偏差、点は国政選挙の結果(参院選は衆院の
     尺度に換算)、×は国政選挙を1回ずつ除いて補間した値。validationは補間の検証の出力。"""
     from datetime import date as _date
     import matplotlib.dates as mdates
@@ -1151,7 +1155,7 @@ _MODEL_DIAGRAM_NOTES = [
 
 
 def generate_trend_model_diagram(out_path: Path = TREND_MODEL_OUT_PATH) -> Path:
-    """党勢指数v2の仕組みの模式図。上の段は毎月動く見えない党勢、下の段は選挙の結果で、
+    """党勢指数v3の仕組みの模式図。上の段は毎月動く見えない党勢、下の段は選挙の結果で、
     国政選挙は党勢を直接(実線)、地方議会選挙は間接的に(破線)映す。"""
     from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch
 
@@ -1278,7 +1282,7 @@ def _place_point_labels(ax, items: list[tuple[str, float, float, str]], obstacle
 
 
 def generate_trend_support_scatter(result: dict, support: dict, out_path: Path = TREND_SUPPORT_OUT_PATH) -> Path:
-    """政党支持率(無党派を除いて再計算)と、党勢指数v2の最新月の値(●、縦棒は±2標準偏差)・
+    """政党支持率(無党派を除いて再計算)と、党勢指数v3の最新月の値(●、縦棒は±2標準偏差)・
     直近の衆院選の議席率(○)の散布図。○から●への矢印は、衆院選の後の党勢の動き。
     supportはsupport_historyの1件({"updated", "S_p"})。点線は両者が等しいところ。"""
     import matplotlib.ticker as mt
@@ -1326,12 +1330,12 @@ def generate_trend_support_scatter(result: dict, support: dict, out_path: Path =
     for axis in (ax.xaxis, ax.yaxis):
         axis.set_major_formatter(mt.FuncFormatter(lambda v, _: f"{v:g}"))
     ax.set_xlabel(f"政党支持率(無党派を除いて再計算, %, {support['updated']}更新)", fontsize=13)
-    ax.set_ylabel("党勢指数v2・衆院の議席率(%)", fontsize=13)
+    ax.set_ylabel("党勢指数v3・衆院の議席率(%)", fontsize=13)
     ax.grid(alpha=0.3, which="major")
     handles = [plt.Line2D([], [], ls="", marker="o", color="#444", ms=6.5),
                plt.Line2D([], [], ls="", marker="o", mfc="white", mec="#444", ms=6.5, mew=1.5),
                plt.Line2D([], [], color="#888", ls="--", lw=1.2)]
-    labels = [f"党勢指数v2({result['tau']}、縦棒は±2標準偏差)", f"衆院選の議席率({shu_date})", "支持率と等しい線"]
+    labels = [f"党勢指数v3({result['tau']}、縦棒は±2標準偏差)", f"衆院選の議席率({shu_date})", "支持率と等しい線"]
     ax.legend(handles, labels, loc="upper left", fontsize=10)
     fig.tight_layout()
     fig.canvas.draw()

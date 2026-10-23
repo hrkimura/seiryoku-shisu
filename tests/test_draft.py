@@ -329,7 +329,7 @@ def test_format_support_diff_lists_points_and_alignment():
          "n": 1, "periods": [("2026-09-30", "2026-10-31")], "pearson": None, "spearman": None,
          "alignment": {"2026-09-30": {"method": "nearest", "dates": ["2026-10-06"], "offset_days": 6}}}
     text = "\n".join(draft._format_support_diff(d, 1))
-    assert "自由民主党 2026-09-30→2026-10-31: v2 +3.00、支持率 +1.50" in text
+    assert "自由民主党 2026-09-30→2026-10-31: v3 +3.00、支持率 +1.50" in text
     assert "最も近い更新(2026-10-06、月末から最も近い更新まで6日)" in text
     assert "3か月差" in draft._format_support_diff(None, 3)[0]
     assert "1か月差(重ならない1期間・1点" in text

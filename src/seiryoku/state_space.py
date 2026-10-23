@@ -585,9 +585,11 @@ def seat_vote_loading(points: list[SeatVotePoint], party: str, before: date) -> 
     return v * (1 - v) / (curve.k * last.x * (1 - last.x))
 
 
-def load_seat_vote_points(min_election: int | None = None, house: str = "shugiin") -> list[SeatVotePoint]:
+def load_seat_vote_points(min_election: int | None = None, house: str = "shugiin",
+                          endorsed: bool = False) -> list[SeatVotePoint]:
     """総務省の公表値から、国政選挙ごとの政党別の議席占有率(無所属を除いて正規化)と
-    比例代表の得票率を集める。参院選(house="sangiin")の議席はその選挙での改選分。"""
+    比例代表の得票率を集める。参院選(house="sangiin")の議席はその選挙での改選分。
+    endorsedなら、無所属の当選者を支援した党に等分してから占有率を求める(national_endorsements)。"""
     from .fetch.diet_history import fetch_sangiin_election_history, fetch_shugiin_history
     from .fetch.vote_share import _district_vote_pct, sangiin_index_url, shugiin_index_url
     from .lineage import canonicalize
@@ -605,6 +607,11 @@ def load_seat_vote_points(min_election: int | None = None, house: str = "shugiin
         seats: dict[str, int] = {}
         for p, n in snap.seats.items():
             seats[canonicalize(p)] = seats.get(canonicalize(p), 0) + n
+        if endorsed:
+            from .national_endorsements import apply, general_seat_deltas
+
+            seats = apply(seats, {canonicalize(p): v for p, v in general_seat_deltas(
+                parse_date(snap.date).isoformat()).items()})
         seats.pop(INDEPENDENT, None)
         total = sum(seats.values())
         pct = {canonicalize(p.strip()): v / 100 for p, v in _district_vote_pct(

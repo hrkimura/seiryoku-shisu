@@ -222,7 +222,7 @@ def save_results(results: dict[str, dict]) -> None:
 
 
 def _renormalized(S_p: dict[str, float]) -> dict[str, float]:
-    """無党派を除いて合計100%に直す。党勢指数v2は政党の間の占有率なので、同じ尺度に揃える。"""
+    """無党派を除いて合計100%に直す。党勢指数v3は政党の間の占有率なので、同じ尺度に揃える。"""
     S = {p: v for p, v in S_p.items() if p != "無党派"}
     total = sum(S.values())
     return {p: v / total * 100 for p, v in S.items()} if total else {}
@@ -263,7 +263,7 @@ MAX_DIFF_PARTIES = 10
 
 
 def trend_support_diffs(result: dict, history: list[dict], horizon: int = 1) -> dict:
-    """党勢指数v2のhorizonか月の差と、同じ期間の政党支持率の差を、党×期間の点として集める。
+    """党勢指数v3のhorizonか月の差と、同じ期間の政党支持率の差を、党×期間の点として集める。
 
     期間は最新の月末から過去へhorizonか月ずつ、重ならないように区切る(重ねると点が独立でなくなる)。
     支持率は月末の値にそろえる(support_history.value_atの補間)。v2の値はmonth_factsと同じく

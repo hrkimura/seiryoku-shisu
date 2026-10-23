@@ -250,14 +250,14 @@ def _format_support(s: dict) -> list[str]:
 
 
 def _format_support_diff(d: dict | None, horizon: int) -> list[str]:
-    """党勢指数v2と政党支持率のhorizonか月の差(support_analysis.trend_support_diffs)を整形する。"""
+    """党勢指数v3と政党支持率のhorizonか月の差(support_analysis.trend_support_diffs)を整形する。"""
     if not d or not d["points"]:
-        return [f"党勢指数v2と政党支持率の{horizon}か月差の散布図: {horizon}か月離れた月末の支持率がまだそろわないため、今回はなし。"]
+        return [f"党勢指数v3と政党支持率の{horizon}か月差の散布図: {horizon}か月離れた月末の支持率がまだそろわないため、今回はなし。"]
     _METHOD = {"exact": "更新日が月末", "interpolated": "前後の更新から補間", "nearest": "最も近い更新"}
-    lines = [f"党勢指数v2と政党支持率(無党派を除いて再計算)の{horizon}か月差(重ならない{len(d['periods'])}期間・"
+    lines = [f"党勢指数v3と政党支持率(無党派を除いて再計算)の{horizon}か月差(重ならない{len(d['periods'])}期間・"
              f"{d['n']}点、どちらもポイント):"]
     for p in d["points"]:
-        lines.append(f"  - {p['party']} {p['from']}→{p['to']}: v2 {p['dx']:+.2f}、支持率 {p['ds']:+.2f}")
+        lines.append(f"  - {p['party']} {p['from']}→{p['to']}: v3 {p['dx']:+.2f}、支持率 {p['ds']:+.2f}")
     if d["pearson"]:
         c = d["pearson"]
         ci = f"、95%区間 {c['ci95'][0]:+.2f}〜{c['ci95'][1]:+.2f}" if c["ci95"] else ""
@@ -271,13 +271,15 @@ def _format_support_diff(d: dict | None, horizon: int) -> list[str]:
 
 
 def _format_trend(t: dict) -> list[str]:
-    """党勢指数v2(state_space_glm.month_facts)を整形する。"""
+    """党勢指数v3(state_space_glm.month_facts)を整形する。"""
     if t.get("error"):
-        return [f"警告: 党勢指数v2を計算できなかった({t['error']})。"]
+        return [f"警告: 党勢指数v3を計算できなかった({t['error']})。"]
     lines = []
+    if t.get("by_election_error"):
+        lines.append(f"警告: 議会補選の取り込みに失敗し、前回までの補選で計算した({t['by_election_error']})。")
     if t.get("refit_reason"):
-        lines.append(f"党勢指数v2のパラメータを今回推定し直した({t['refit_reason']})。")
-    lines.append(f"党勢指数v2({t['tau']}時点、衆院の議席率の尺度、その月までの選挙による値。"
+        lines.append(f"党勢指数v3のパラメータを今回推定し直した({t['refit_reason']})。")
+    lines.append(f"党勢指数v3({t['tau']}時点、衆院の議席率の尺度、その月までの選挙による値。"
                  "括弧内は±2標準偏差の幅、変化は前月末からのポイント差、変化の大きい順):")
     rows = sorted(t["parties"].items(), key=lambda kv: -abs(kv[1]["change"] or 0.0))
     for party, r in rows:
