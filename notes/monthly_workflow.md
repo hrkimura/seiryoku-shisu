@@ -27,6 +27,12 @@
 
 ## 毎月の手順
 
+0. **(第2回の前だけ)v3を推定し直す。** 2026年10月に国政選挙の議席の読み取りを直した(2019年参院選・2021年衆院選の折り返した党名で抜けていた8議席、2024年衆院選の本人届出の1議席)。月次実行は国政選挙がないと推定し直さないので、10月分の月次実行の後に手動で推定し直しと検証を回し、`notes/trend_model.tex` の検証の数字(v3の補間の誤差)を新しい値に直す。8コアで1時間弱かかる。済んだらこの項目を消す。
+
+   ```
+   PYTHONPATH=src python3 -m seiryoku.state_space_glm --refit --validate --workers 8
+   ```
+
 1. **月次実行の結果を確かめる。** `journalctl --user -u seiryoku-shisu.service` で終わったことと、画面の表示を見る。
    - 「[要確認] 略称表にない政党名」: `src/seiryoku/fetch/miharu.py` の `ABBREVIATIONS` に追加する(どの党か分からなければClaudeに調べてもらう)。
    - 「党勢指数v3: [失敗]」: Claudeに原因の調査を頼む。

@@ -30,6 +30,9 @@ _SHUGIIN_NON_PARTY_CELLS = {
     "男", "女", "計", "新", "前", "元", "区分",
     "小計", "合計", "政党等所属",  # 政党ではなく複数政党の再集計列
 }
+# 合計の表の「政党等所属」は、党派別の表に列挙されない政治団体の当選者(2024年の日本保守党の
+# 小選挙区の1議席など)。落とすと総議席が定数に足りなくなるので、諸派として数える。
+_SHUGIIN_OTHERS_LABEL = "諸派"
 
 SANGIIN_ICHIRAN_URL = "https://www.soumu.go.jp/senkyo/senkyo_s/data/sangiin/ichiran.html"
 _SANGIIN_RESULT_LINK_TEXT = "党派別男女別新前元別当選人数"
@@ -109,6 +112,25 @@ def _norm(s: object) -> str:
     return re.sub(r"\s+", "", s) if isinstance(s, str) else ""
 
 
+def _header_blocks(rows: list[tuple], header_indices: list[int]) -> list[tuple[int, dict[int, list[str]]]]:
+    """見出し行を(最後の見出し行の位置, {列: 見出しの断片})のブロックにまとめる。
+    長い党名(2019年参院選の「労働の解放をめざす/労働者党」、2021年衆院選の「ＮＨＫと裁判してる党
+    弁護士法72条違反で」)は見出しが2行に折り返され、続きの行も見出しに見える。続きの行を
+    別のブロックとすると、元の見出しのブロックが空になり同じブロックの党ごと抜ける。"""
+    blocks: list[tuple[int, dict[int, list[str]]]] = []
+    prev = None
+    for idx in header_indices:
+        cells = {i: v for i, v in enumerate(rows[idx]) if i >= 2 and isinstance(v, str) and _norm(v)}
+        if prev is not None and idx == prev + 1:
+            for i, v in cells.items():
+                blocks[-1][1].setdefault(i, []).append(v)
+            blocks[-1] = (idx, blocks[-1][1])
+        else:
+            blocks.append((idx, {i: [v] for i, v in cells.items()}))
+        prev = idx
+    return blocks
+
+
 def _parse_shugiin_result_sheet(rows: list[tuple]) -> dict[str, int]:
     """当選人数シート1枚から{政党: 当選者数}を返す。
 
@@ -136,12 +158,15 @@ def _parse_shugiin_result_sheet(rows: list[tuple]) -> dict[str, int]:
         raise ValueError("政党名の見出し行が見つかりません")
 
     seats: dict[str, int] = {}
-    for block_i, header_idx in enumerate(header_indices):
-        block_end = header_indices[block_i + 1] if block_i + 1 < len(header_indices) else len(rows)
-        header = rows[header_idx]
-        party_cols = [
-            (i, _norm(v)) for i, v in enumerate(header) if i >= 2 and isinstance(v, str) and _looks_like_party_name(v)
-        ]
+    for block_i, (header_idx, header) in enumerate(blocks := _header_blocks(rows, header_indices)):
+        block_end = blocks[block_i + 1][0] if block_i + 1 < len(blocks) else len(rows)
+        party_cols = []
+        for i, pieces in sorted(header.items()):
+            name = "".join(_norm(p) for p in pieces)
+            if name == "政党等所属":
+                party_cols.append((i, _SHUGIIN_OTHERS_LABEL))
+            elif any(_looks_like_party_name(p) for p in pieces):
+                party_cols.append((i, name))
         # 小選挙区・比例代表・合計の3ブロックそれぞれに「計」行があり、
         # このヘッダーに対応する範囲内(次の見出しの手前まで)での最後の行を使う。
         total_rows = [row for row in rows[header_idx + 1 : block_end] if row and len(row) > 1 and _norm(row[1]) == "計"]
@@ -269,11 +294,11 @@ def _parse_sangiin_result_sheet(rows: list[tuple]) -> dict[str, int]:
         raise ValueError("政党名の見出し行が見つかりません")
 
     seats: dict[str, int] = {}
-    for block_i, header_idx in enumerate(header_indices):
-        block_end = header_indices[block_i + 1] if block_i + 1 < len(header_indices) else len(rows)
-        header = rows[header_idx]
+    for block_i, (header_idx, header) in enumerate(blocks := _header_blocks(rows, header_indices)):
+        block_end = blocks[block_i + 1][0] if block_i + 1 < len(blocks) else len(rows)
         party_cols = [
-            (i, _norm(v)) for i, v in enumerate(header) if i >= 2 and isinstance(v, str) and _looks_like_party_name(v)
+            (i, "".join(_norm(p) for p in pieces)) for i, pieces in sorted(header.items())
+            if any(_looks_like_party_name(p) for p in pieces)
         ]
         total_rows = [
             row

@@ -107,17 +107,17 @@ def test_parse_sheet_with_multiple_stacked_blocks():
     }
 
 
-def test_parse_sheet_excludes_rollup_columns_but_keeps_independents():
-    """「政党等所属」「小計」「合計」は複数政党の再集計列であり政党名ではないので
-    除外するが、「無所属」は正真正銘の1カテゴリとして残す(実データで確認済み)。
-    """
+def test_parse_sheet_counts_self_filed_party_members_as_others():
+    """本人・推薦届出の表の「小計」「合計」は再集計列なので除外し、「無所属」は1カテゴリとして残す。
+    「政党等所属」は政党の届出でなく本人届出で立った政党所属の当選者で、党派別の表に入らない
+    (2024年の日本保守党の小選挙区の1議席)ので、諸派として数える。"""
     title = [("3. 開票結果", "", "", "", "", "（１）届出政党等別男女別新前元別当選人数(小選挙区、比例代表)")]
     subtitle = [("", "", "本人･推薦届出")]
     blank = [("", "", "", "", "", "", "", "", "", "", "", "　　     合　計")]
     header = ["区  分", "", "        政党等所属", "", "", "        無所属", "", "", "        小   計", "", "", ""]
     danjokei = ["", ""] + ["男", "女", "計"] * 3 + [""]
     filler = lambda label0, label1: [label0, label1] + [""] * (len(header) - 2)
-    total_row = ["", "計", "", "", 439, "", "", 5, "", "", 444, "", "", 465]
+    total_row = ["", "計", "", "", 1, "", "", 12, "", "", 13, "", "", 465]
     rows = (
         title
         + subtitle
@@ -129,7 +129,7 @@ def test_parse_sheet_excludes_rollup_columns_but_keeps_independents():
         + [tuple(total_row)]
     )
     seats = _parse_shugiin_result_sheet(rows)
-    assert seats == {"無所属": 5}
+    assert seats == {"諸派": 1, "無所属": 12}
 
 
 def test_parse_sheet_raises_when_no_header_found():
@@ -185,6 +185,33 @@ def test_parse_sangiin_sheet_with_multiple_stacked_blocks():
         "日本共産党": 4,
         "無所属": 5,
     }
+
+
+def test_parse_sangiin_sheet_joins_a_party_name_wrapped_onto_two_header_rows():
+    """2019年のシートでは「労働の解放をめざす/労働者党」が2行に折り返され、続きの行が
+    別の見出しとみなされて同じブロックの社民・れいわ・NHK党が抜けていた。"""
+    title = [("3. 開票結果",)]
+    block = _sangiin_block(["社会民主党", "れいわ新選組", "労働の解放をめざす"], [1, 2, 0])
+    i = next(j for j, row in enumerate(block) if "社会民主党" in row)
+    cont = tuple(["区　分", None] + [None] * 6 + ["労働者党", None, None])
+    rows = title + _sangiin_block(["自由民主党"], [57]) + title + block[: i + 1] + [cont] + block[i + 1 :]
+    assert _parse_sangiin_result_sheet(rows) == {
+        "自由民主党": 57,
+        "社会民主党": 1,
+        "れいわ新選組": 2,
+        "労働の解放をめざす労働者党": 0,
+    }
+
+
+def test_parse_shugiin_sheet_joins_a_party_name_wrapped_onto_two_header_rows():
+    """2021年のシートでは「ＮＨＫと裁判してる党/弁護士法72条違反で」が2行に折り返され、
+    同じブロックのれいわ・社民が抜けていた。"""
+    header = ("", "", "ＮＨＫと裁判してる党", "", "", "れいわ新選組", "", "", "社会民主党", "", "")
+    cont = ("", "", "弁護士法72条違反で", "", "", "", "", "", "", "", "")
+    danjokei = ("", "") + ("男", "女", "計") * 3
+    total = ("", "計", 0, 0, 0, 2, 1, 3, 1, 0, 1)
+    seats = _parse_shugiin_result_sheet([header, cont, danjokei, total])
+    assert seats == {"ＮＨＫと裁判してる党弁護士法72条違反で": 0, "れいわ新選組": 3, "社会民主党": 1}
 
 
 def test_parse_sangiin_sheet_raises_when_no_header_found():
