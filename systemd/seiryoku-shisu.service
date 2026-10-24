@@ -1,5 +1,7 @@
 [Unit]
 Description=政党影響力指数の月次更新
+OnSuccess=seiryoku-shisu-draft.service
+OnFailure=seiryoku-shisu-notify-failure@%n.service
 
 [Service]
 Type=oneshot

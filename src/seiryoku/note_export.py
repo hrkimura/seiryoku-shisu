@@ -104,6 +104,18 @@ def convert(markdown: str, table_image_dir: Path, table_prefix: str) -> str:
     return "\n".join(out) + "\n"
 
 
+MAX_CHARS = 5000
+
+
+_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def char_count(note_text: str) -> int:
+    """note用の本文の字数。画像とキャプションの行、改行、リンクのURLは数えない(リンクは表示される文字だけ)。"""
+    return sum(len(_LINK_RE.sub(r"\1", l)) for l in note_text.splitlines()
+               if not l.startswith(("[ここに画像", "[キャプション")))
+
+
 def export(draft_path: Path) -> Path:
     """notes/xxx_draft.md -> notes/xxx_draft_for_note.md(表の画像はnotes/images/へ)。"""
     stem = draft_path.stem
@@ -119,4 +131,7 @@ def export(draft_path: Path) -> Path:
 if __name__ == "__main__":
     import sys
 
-    print(export(Path(sys.argv[1])))
+    note_path = export(Path(sys.argv[1]))
+    n = char_count(note_path.read_text(encoding="utf-8"))
+    print(note_path)
+    print(f"{n}字" + (f"(上限の{MAX_CHARS}字を超えている)" if n > MAX_CHARS else ""))

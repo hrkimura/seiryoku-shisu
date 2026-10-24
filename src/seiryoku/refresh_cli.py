@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
 from pathlib import Path
 
 from . import municipal_registry, turnover
@@ -62,6 +63,13 @@ def is_running() -> bool:
 def is_done() -> bool:
     """前回、首長・議会とも最後まで完走していればTrue。"""
     return DONE_MARKER_PATH.exists()
+
+
+def done_at() -> date | None:
+    """最後に完走した日。完了マーカーは次のサイクルの開始まで残るので、今月の分かどうかはこれで見る。"""
+    if not DONE_MARKER_PATH.exists():
+        return None
+    return date.fromtimestamp(DONE_MARKER_PATH.stat().st_mtime)
 
 
 def _clear_done_marker() -> None:

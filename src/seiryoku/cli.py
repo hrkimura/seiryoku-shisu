@@ -12,11 +12,27 @@ from . import (
 )
 from . import draft as draft_mod
 from . import forecast as forecast_mod
+from . import monthly_article
 from .fetch import diet, miharu
 from .index import compute_combined_index
 from .monthly_index import build_month_snapshots
 
 OUTPUT_DIR = Path(__file__).resolve().parents[2] / "output"
+# データの読み取りを直したときなど、国政選挙がなくても次の月次実行で推定し直したいときに置く。
+# 推定し直しと検証が済んだら消す。
+REFIT_REQUEST_PATH = Path(__file__).resolve().parents[2] / "data" / "refit_requested"
+
+
+def done_marker(today: date, base: Path = OUTPUT_DIR) -> Path:
+    """その月の月次実行が最後まで済んだ印。月次実行は更新クロールの完了と、2日以降の
+    6時間おきのタイマーから起動されるので、途中で再起動されて終わらなかった月は
+    次の起動で取り直し、済んだ月は何もしない。"""
+    return base / f"monthly_run_done_{today.year:04d}-{today.month:02d}"
+
+
+def ready_to_run(today: date, refresh_done_at: date | None) -> bool:
+    """今月の更新クロールが済んでいればTrue。"""
+    return refresh_done_at is not None and refresh_done_at >= today.replace(day=1)
 
 
 def monthly_image_dir(history: list[dict], base: Path = OUTPUT_DIR) -> Path:
@@ -130,7 +146,7 @@ def _update_support_analysis(history: list[dict]) -> dict:
 
 def _update_trend_v2(image_dir: Path) -> dict:
     """党勢指数v3を計算し、図を描いて、記事の事実データに載せる節を返す。補間の検証は
-    数時間かかるので月次では回さず、図2には最新の検証の結果を使う。失敗しても月次実行は止めない。
+    推定し直した月だけ回し(30分ほど)、図2には最新の検証の結果を使う。失敗しても月次実行は止めない。
     議会補選の取り込みに失敗したときは、前回までに保存した補選で計算する。"""
     from . import by_elections, charts
     from . import state_space_glm as glm
@@ -141,7 +157,9 @@ def _update_trend_v2(image_dir: Path) -> dict:
     except Exception as e:
         by_election_error = f"{type(e).__name__}: {e}"
     try:
-        res = glm.run()
+        res = glm.run(refit=REFIT_REQUEST_PATH.exists(), validate_on_refit=True)
+        if res["validation_path"]:
+            REFIT_REQUEST_PATH.unlink(missing_ok=True)
         result = res["result"]
         validations = sorted(OUTPUT_DIR.glob("trend/state_space_glm_validation_*.json"))
         validation = json.loads(validations[-1].read_text()) if validations else None
@@ -158,6 +176,7 @@ def _update_trend_v2(image_dir: Path) -> dict:
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
     return {**glm.month_facts(result), "refit_reason": res["refit_reason"],
+            "validated": res["validation_path"] is not None,
             "validation_tau": validation["tau"] if validation else None, "support_diff": diffs,
             "by_election_error": by_election_error}
 
@@ -284,11 +303,20 @@ def _print_trend_summary(t: dict) -> None:
         else:
             print(f"  支持率の{h}か月差との散布図: {h}か月離れた月末の支持率がまだそろわないため描いていません")
     if t["refit_reason"]:
-        print(f"  [要対応] パラメータを推定し直しました({t['refit_reason']})。補間の検証は自動では回さないので、"
-              "PYTHONPATH=src python -m seiryoku.state_space_glm --validate --workers 8 を実行してください(30分ほど)。")
+        print(f"  [要確認] パラメータを推定し直し、補間の検証も回し直しました({t['refit_reason']})。")
 
 
 def main() -> None:
+    from . import refresh_cli
+
+    today = date.today()
+    marker = done_marker(today)
+    if marker.exists():
+        print(f"今月の月次実行は済んでいる({marker})")
+        return
+    if not ready_to_run(today, refresh_cli.done_at()):
+        print("今月の更新クロールが済むのを待つ")
+        return
     result = run()
     OUTPUT_DIR.mkdir(exist_ok=True)
     out_path = OUTPUT_DIR / f"{result['date']}.json"
@@ -339,11 +367,19 @@ def main() -> None:
         facts_path = draft_mod.save_facts(facts)
         print(f"\nANTHROPIC_API_KEY未設定のため記事下書きの生成はスキップし、"
               f"事実データのみ保存しました: {facts_path}")
+        trend = result["trend_v2"]
+        status = monthly_article.prepare(
+            facts["year"], facts["month"], Path(mi["image_dir"]), facts_path.read_text(encoding="utf-8"),
+            result["support_analysis"]["unknown_labels"], trend.get("refit_reason"), trend.get("validated", False),
+            provisional_start_changed,
+        )
+        print(f"記事用の図のコピーと警告のまとめ: {status}")
 
     # 次回実行時の対象期間の起点として、今回報告した直近月を記録する(月一更新を
     # 時計のように正確に回す気はなく、間隔が空いても前回からの続きを報告する
     # 方針、2026-09にユーザー指示)。
     draft_mod.save_last_report(facts["year"], facts["month"])
+    marker.write_text(result["date"] + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

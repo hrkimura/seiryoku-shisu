@@ -848,11 +848,12 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
-        workers: int | None = None) -> dict:
+        workers: int | None = None, validate_on_refit: bool = False) -> dict:
     """月次の党勢指数v3を計算して保存する。v3はv2の観測に国政・地方議会の補選の議席を加えたもの
     (補選の得票率は、国政選挙の補間を良くしなかったので使わない)。保存後の国政選挙がデータにあれば
     パラメータを推定し直す。戻り値は出力の中身(result)、保存先(path)、検証の保存先(validation_path)、
-    推定し直した理由(refit_reason、推定し直さなければNone)。"""
+    推定し直した理由(refit_reason、推定し直さなければNone)。validate_on_refitを指定すると、
+    推定し直したときだけ補間の検証も行う。"""
     from .by_elections import load_events_with_by_elections
     from .trend import OUTPUT_DIR, month_ends
 
@@ -927,7 +928,7 @@ def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
     path.write_text(json.dumps(out, ensure_ascii=False, indent=1))
     print(path)
     vpath = None
-    if validate:
+    if validate or (validate_on_refit and reason):
         checks = national_interpolation_check(obs_by_party, shu, san, workers)
         vpath = OUTPUT_DIR / f"state_space_glm_validation_{tau.isoformat()}.json"
         vpath.write_text(json.dumps({"tau": tau.isoformat(), "summary": interpolation_summary(checks),

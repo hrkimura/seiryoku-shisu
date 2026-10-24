@@ -1,8 +1,10 @@
 [Unit]
-Description=政党影響力指数を毎月1回更新する
+Description=政党影響力指数の月次更新を取りこぼさないための定期起動
 
 [Timer]
-OnCalendar=*-*-07 00:00:00
+# 本来の起動は更新クロールの完了から(OnSuccess)。これは、途中で再起動されて終わらなかったときの
+# 取り直し用(済んだ月や、クロール待ちの間はすぐ終わる)。
+OnCalendar=*-*-02..31 00/6:00:00
 Persistent=true
 
 [Install]

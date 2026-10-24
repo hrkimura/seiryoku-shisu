@@ -122,3 +122,14 @@ def test_main_leaves_head_done_marker_intact_when_gikai_phase_fails(tmp_path, mo
     assert refresh_cli.HEAD_DONE_MARKER_PATH.exists()
     assert not refresh_cli.GIKAI_DONE_MARKER_PATH.exists()
     assert refresh_cli.is_done() is False
+
+
+def test_done_at_reads_marker_date(tmp_path, monkeypatch):
+    from datetime import date
+
+    from seiryoku import refresh_cli
+
+    monkeypatch.setattr(refresh_cli, "DONE_MARKER_PATH", tmp_path / "done.json")
+    assert refresh_cli.done_at() is None
+    (tmp_path / "done.json").write_text("{}")
+    assert refresh_cli.done_at() == date.today()

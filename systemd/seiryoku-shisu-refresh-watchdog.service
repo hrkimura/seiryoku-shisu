@@ -1,5 +1,6 @@
 [Unit]
 Description=党勢指数の更新クロールが未完了なら自動再開する日次ウォッチドッグ(一時的、約10日で自動的に打ち切り)
+OnSuccess=seiryoku-shisu.service
 
 [Service]
 Type=oneshot

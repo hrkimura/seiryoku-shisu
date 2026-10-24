@@ -1,0 +1,17 @@
+[Unit]
+Description=党勢指数の月次記事の下書きをClaude Codeで生成する
+OnFailure=seiryoku-shisu-notify-failure@%n.service
+# 通信の失敗(休止明けなど)で止まったら取り直す。3回続けて失敗したらあきらめて通知だけ残す。
+StartLimitIntervalSec=1d
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Desktop/program/色々/20260831_政党影響力指数
+Environment=PYTHONPATH=%h/Desktop/program/色々/20260831_政党影響力指数/src
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# 定額のサブスクリプションで動かす。APIキーがあると従量課金に切り替わる。
+UnsetEnvironment=ANTHROPIC_API_KEY
+ExecStart=%h/Desktop/program/色々/bin/python3 -m seiryoku.monthly_article
+Restart=on-failure
+RestartSec=30min

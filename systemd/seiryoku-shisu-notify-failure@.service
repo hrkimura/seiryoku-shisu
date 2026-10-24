@@ -1,0 +1,6 @@
+[Unit]
+Description=%i の失敗をデスクトップに通知する
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/notify-send --app-name=党勢指数 --urgency=critical --expire-time=0 "%i が失敗しました" "journalctl --user -u %i で確かめてください"

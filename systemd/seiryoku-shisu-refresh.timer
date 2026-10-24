@@ -1,8 +1,9 @@
 [Unit]
-Description=党勢指数の選挙結果キャッシュ更新クロールを毎月1回(本編集より数日前に)実行する
+Description=党勢指数の選挙結果キャッシュ更新クロールを毎月1回実行し、終わったら月次実行に進む
 
 [Timer]
-OnCalendar=*-*-05 00:00:00
+# 月末の日曜の選挙の結果がgo2senkyoに載るのを待って2日に始める
+OnCalendar=*-*-02 00:00:00
 Persistent=true
 
 [Install]

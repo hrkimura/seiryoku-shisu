@@ -1,5 +1,6 @@
 [Unit]
 Description=党勢指数の選挙結果キャッシュ更新クロール(首長・議会、数時間かかる)
+OnSuccess=seiryoku-shisu.service
 
 [Service]
 Type=oneshot

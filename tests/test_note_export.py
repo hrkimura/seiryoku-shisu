@@ -40,3 +40,8 @@ def test_convert_attaches_caption_to_table_image(tmp_path):
     md = "| a | b |\n|---|---|\n| 1 | 2 |\n*表1: 説明*\n"
     out = note_export.convert(md, tmp_path, "x")
     assert out == "[ここに画像: x_table1.png]\n[キャプション: 表1: 説明]\n"
+
+
+def test_char_count_ignores_images_captions_and_link_urls():
+    text = "# 題\n\n本文[リンク](https://example.com/abc)。\n[ここに画像: a.png]\n[キャプション: 図1: 説明]\n"
+    assert note_export.char_count(text) == len("# 題") + len("本文リンク。")
