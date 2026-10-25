@@ -103,3 +103,11 @@ def test_main_keeps_existing_draft(tmp_path, monkeypatch):
     assert ma.main([]) == 0
     assert calls == []
     assert (notes / "dai2kai_draft.md").read_text() == "手で書いた"
+
+
+def test_national_by_lines_reports_added_pending_and_errors():
+    r = {"vote_date": "2027-04-25", "house": "衆議院", "district": "甲県第1区", "winner": "A", "party": "B"}
+    lines = ma.national_by_lines({"added": [r], "pending": ["2027年 10月の補欠選挙"], "error": "X"})
+    assert "衆議院甲県第1区" in lines[0] and "10月の補欠選挙" in lines[1] and "X" in lines[2]
+    assert ma.national_by_lines(None) == [] and ma.national_by_lines({"added": [], "pending": []}) == []
+    assert len(ma.collect_warnings("", [], None, False, False, 0, {"added": [r], "pending": []})) == 1

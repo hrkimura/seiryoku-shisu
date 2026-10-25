@@ -11,4 +11,11 @@ output/draft_facts_{{YM}}.txt を読んで、第{{N}}回の記事の下書きを
 - 選挙講評で事実データにないこと(得票数、対立候補、推薦政党など)は、調べて出典のリンクを本文に付ける
 - status に「補間の検証も回し直した」とあれば、notes/trend_model.tex の検証の数字(v3の補間の誤差)を output/trend/ の最新の state_space_glm_validation_*.json に合わせて直す
 - 書き終えたら、重複・用語の初出・数値を見直してから `PYTHONPATH=src python3 -m seiryoku.note_export notes/dai{{N}}kai_draft.md` でnote用に変換する。表示される字数が5000字を超えていたら削って変換し直す
-- 最後の報告には、(1) status の警告(なければ「なし」)、(2) 記事の要点を3行ほど、(3) 字数、(4) 下書きで自信のない箇所、(5) コミットコマンド、をこの順に書く
+- status の警告のうち次のものは、下書きを書く前に自分で対処する。直したら関係するテストを `PYTHONPATH=src python3 -m pytest -q tests/<ファイル>` で回す
+  - 略称表にない政党名: どの党かを調べて `src/seiryoku/fetch/miharu.py` の `ABBREVIATIONS` に加え、`data/support_history.json` に略称のまま記録された値を正式名称に直す(tests/test_miharu.py)。分からなければ直さずに報告する
+  - 国政補選を取り込んだ: 選挙講評を書くときに、当選者と届出党派を報道と突き合わせる。食い違えば `data/national_by_elections.json` を直し、報告の警告に書く
+  - 結果の表がない国政補選: 投票日から1か月たっていなければ記事の更新待ちなので何もしない(翌月の実行が取り込む)。1か月以上たっていれば、Wikipediaの記事を読んで `src/seiryoku/fetch/wikipedia_by_elections.py` を新しい書式に合わせる(tests/test_wikipedia_by_elections.py)
+  - 国政補選の読み取りに失敗、党勢指数v3を計算できなかった、議会補選の取り込みに失敗: 原因を調べ、コードやデータの修正で直せるなら直してテストを回す。直せなければ原因と必要な対応を報告する
+  - パラメータを推定し直した(国政選挙による): 新しい党の結成・合流・分裂がなかったか調べ、あれば `src/seiryoku/lineage.py` の `BRANCH_OF`、`ALLIANCE_MEMBERS`、`ALLIANCE_ORIGIN_SEATS` の見直し案を報告する(コードは直さない)
+  - 事実データに効くもの(略称表、補選の記録、v3や補選の取り込みのコード)を直したときは、`PYTHONPATH=src python3 -m seiryoku.cli --force` で月次実行をやり直してから(10〜20分)、新しい事実データと status で書く
+- 最後の報告には、(1) status の警告と、それぞれにどう対処したか(なければ「なし」)、(2) 記事の要点を3行ほど、(3) 字数、(4) 下書きで自信のない箇所、(5) コミットコマンド、をこの順に書く

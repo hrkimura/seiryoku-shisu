@@ -27,6 +27,9 @@ ALLOWED_TOOLS = [
     "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch",
     "Bash(PYTHONPATH=src python3 -m seiryoku.note_export:*)",
     "Bash(git status:*)", "Bash(git diff:*)",
+    # 警告への対処(略称表や補選の読み取りの修正)をしたときに、関係するテストを回すため
+    "Bash(PYTHONPATH=src python3 -m pytest:*)",
+    "Bash(PYTHONPATH=src python3 -m seiryoku.cli --force)",
 ]
 
 
@@ -63,9 +66,25 @@ def support_fetch_failures(since: str = "1 month ago") -> int | None:
     return out.count("[取得失敗]")
 
 
+def national_by_lines(national_by: dict | None) -> list[str]:
+    """国政補選の自動取り込みの結果を、警告のまとめに載せる行にする。"""
+    if not national_by:
+        return []
+    lines = [f"[参考] 国政補選を取り込んだ: {r['vote_date']} {r['house']}{r['district']}"
+             f"(当選 {r['winner']}、{r['party']})"
+             for r in national_by.get("added", [])]
+    if national_by.get("pending"):
+        lines.append(f"[要確認] 投票日を過ぎたのに結果の表がない国政補選: {', '.join(national_by['pending'])}")
+    if national_by.get("error"):
+        lines.append(f"[要確認] 国政補選の読み取りに失敗し、記録済みの補選で計算した: {national_by['error']}")
+    return lines
+
+
 def collect_warnings(facts_text: str, unknown_labels: list[str], refit_reason: str | None,
-                     validated: bool, provisional_start_changed: bool, support_failures: int | None) -> list[str]:
+                     validated: bool, provisional_start_changed: bool, support_failures: int | None,
+                     national_by: dict | None = None) -> list[str]:
     warnings = [l.strip() for l in facts_text.splitlines() if l.startswith(("警告:", "!!!"))]
+    warnings += national_by_lines(national_by)
     if unknown_labels:
         warnings.append(f"[要確認] 支持率の略称表にない政党名: {', '.join(unknown_labels)}"
                         "(src/seiryoku/fetch/miharu.py の ABBREVIATIONS に追加する)")
@@ -95,11 +114,12 @@ def write_status(year: int, month: int, n: int, warnings: list[str], copied: lis
 
 
 def prepare(year: int, month: int, image_dir: Path, facts_text: str, unknown_labels: list[str],
-            refit_reason: str | None, validated: bool, provisional_start_changed: bool) -> Path:
+            refit_reason: str | None, validated: bool, provisional_start_changed: bool,
+            national_by: dict | None = None) -> Path:
     n = article_number(year, month)
     copied = copy_images(image_dir, n)
     warnings = collect_warnings(facts_text, unknown_labels, refit_reason, validated,
-                                provisional_start_changed, support_fetch_failures())
+                                provisional_start_changed, support_fetch_failures(), national_by)
     path = write_status(year, month, n, warnings, copied)
     notify(f"{year}年{month}月分の月次実行が終わりました",
            f"警告{len(warnings)}件。続けて第{n}回の下書きを生成します" if warnings

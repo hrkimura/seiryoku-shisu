@@ -92,6 +92,33 @@ def build_gikai_cache(jichitai_ids: list[int] | None = None, min_year: int = 201
     return state
 
 
+def save_national(data: dict) -> None:
+    data["elections"].sort(key=lambda r: r["vote_date"])
+    NATIONAL_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def update_national(today: date, wikitext_by_year: dict[int, str | None] | None = None) -> dict:
+    """前年と今年の「YYYY年日本の補欠選挙」の記事から、まだ記録していない国政の補選を加える。
+    戻り値は加えた選挙(added)と、投票日を過ぎたのに結果の表がない節(pending)。"""
+    from .fetch import wikipedia_by_elections as wbe
+
+    data = json.loads(NATIONAL_PATH.read_text(encoding="utf-8"))
+    known = {(r["vote_date"], r["district"]) for r in data["elections"]}
+    added, pending = [], []
+    for year in (today.year - 1, today.year):
+        text = wikitext_by_year[year] if wikitext_by_year is not None else wbe.fetch_wikitext(year)
+        if text is None:
+            continue
+        pending += [f"{year}年 {h}" for h in wbe.sections_without_results(text, today)]
+        for r in wbe.parse_year(text, year):
+            if (r["vote_date"], r["district"]) not in known and date.fromisoformat(r["vote_date"]) <= today:
+                data["elections"].append(r)
+                added.append(r)
+    if added:
+        save_national(data)
+    return {"added": added, "pending": pending}
+
+
 def _allocation(r: dict, c: dict, national_parties: set[str], endorsed: bool) -> dict[str, float]:
     """候補cの票(または議席)の党ごとの割合。届出が無所属の候補は、endorsedなら支援した党で等分する
     (national_endorsementsの規則)。"""

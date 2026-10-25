@@ -35,3 +35,28 @@ def test_ready_to_run_waits_for_this_months_crawl():
     assert not ready_to_run(date(2026, 11, 3), None)
     assert ready_to_run(date(2026, 11, 4), date(2026, 11, 4))
     assert not ready_to_run(date(2026, 11, 20), date(2026, 10, 7))
+
+
+class _Ran(Exception):
+    pass
+
+
+def _patch_main(tmp_path, monkeypatch, refresh_done_at):
+    from seiryoku import cli, refresh_cli
+
+    monkeypatch.setattr(cli, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(cli, "done_marker", lambda today, base=tmp_path: base / "done")
+    monkeypatch.setattr(refresh_cli, "done_at", lambda: refresh_done_at)
+    monkeypatch.setattr(cli, "run", lambda: (_ for _ in ()).throw(_Ran()))
+    return cli
+
+
+def test_main_skips_when_done_or_waiting_and_force_overrides(tmp_path, monkeypatch):
+    import pytest
+
+    cli = _patch_main(tmp_path, monkeypatch, None)
+    cli.main([])  # クロール待ち
+    (tmp_path / "done").write_text("x")
+    cli.main([])  # 済んでいる
+    with pytest.raises(_Ran):
+        cli.main(["--force"])

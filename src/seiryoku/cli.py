@@ -147,7 +147,7 @@ def _update_support_analysis(history: list[dict]) -> dict:
 def _update_trend_v2(image_dir: Path) -> dict:
     """党勢指数v3を計算し、図を描いて、記事の事実データに載せる節を返す。補間の検証は
     推定し直した月だけ回し(30分ほど)、図2には最新の検証の結果を使う。失敗しても月次実行は止めない。
-    議会補選の取り込みに失敗したときは、前回までに保存した補選で計算する。"""
+    補選の取り込みに失敗したときは、前回までに保存した補選で計算する。"""
     from . import by_elections, charts
     from . import state_space_glm as glm
 
@@ -156,6 +156,11 @@ def _update_trend_v2(image_dir: Path) -> dict:
         by_elections.build_gikai_cache(refresh=True)
     except Exception as e:
         by_election_error = f"{type(e).__name__}: {e}"
+    national_by = {"added": [], "pending": [], "error": None}
+    try:
+        national_by.update(by_elections.update_national(date.today()))
+    except Exception as e:
+        national_by["error"] = f"{type(e).__name__}: {e}"
     try:
         res = glm.run(refit=REFIT_REQUEST_PATH.exists(), validate_on_refit=True)
         if res["validation_path"]:
@@ -178,7 +183,7 @@ def _update_trend_v2(image_dir: Path) -> dict:
     return {**glm.month_facts(result), "refit_reason": res["refit_reason"],
             "validated": res["validation_path"] is not None,
             "validation_tau": validation["tau"] if validation else None, "support_diff": diffs,
-            "by_election_error": by_election_error}
+            "by_election_error": by_election_error, "national_by": national_by}
 
 
 def run() -> dict:
@@ -289,6 +294,8 @@ def _print_trend_summary(t: dict) -> None:
         return
     if t.get("by_election_error"):
         print(f"  [要確認] 議会補選の取り込みに失敗し、前回までの補選で計算した: {t['by_election_error']}")
+    for line in monthly_article.national_by_lines(t.get("national_by")):
+        print("  " + line)
     for party, r in sorted(t["parties"].items(), key=lambda kv: -kv[1]["x"]):
         ch = f"{r['change'] * 100:+.1f}" if r["change"] is not None else "—"
         print(f"  {party}: {r['x'] * 100:.1f}%(前月差 {ch})")
@@ -306,15 +313,21 @@ def _print_trend_summary(t: dict) -> None:
         print(f"  [要確認] パラメータを推定し直し、補間の検証も回し直しました({t['refit_reason']})。")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    import argparse
+
     from . import refresh_cli
 
+    ap = argparse.ArgumentParser(description="月次実行")
+    ap.add_argument("--force", action="store_true",
+                    help="今月の実行が済んでいても、更新クロールを待たずにやり直す(警告に対処した後の取り直し用)")
+    args = ap.parse_args(argv)
     today = date.today()
     marker = done_marker(today)
-    if marker.exists():
+    if marker.exists() and not args.force:
         print(f"今月の月次実行は済んでいる({marker})")
         return
-    if not ready_to_run(today, refresh_cli.done_at()):
+    if not args.force and not ready_to_run(today, refresh_cli.done_at()):
         print("今月の更新クロールが済むのを待つ")
         return
     result = run()
@@ -371,7 +384,7 @@ def main() -> None:
         status = monthly_article.prepare(
             facts["year"], facts["month"], Path(mi["image_dir"]), facts_path.read_text(encoding="utf-8"),
             result["support_analysis"]["unknown_labels"], trend.get("refit_reason"), trend.get("validated", False),
-            provisional_start_changed,
+            provisional_start_changed, trend.get("national_by"),
         )
         print(f"記事用の図のコピーと警告のまとめ: {status}")
 

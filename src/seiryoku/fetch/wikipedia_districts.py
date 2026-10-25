@@ -93,17 +93,22 @@ def parse_shugiin(wikitext: str, kai: int) -> list[dict]:
     for t in _templates(wikitext, "衆議院小選挙区"):
         if not re.search(r"\|\s*選挙回\s*=\s*%d\s*(\||\n)" % kai, t):
             continue
-        rows = []
-        for line in t.split("\n")[2:]:
-            line = re.sub(r"\{\{nowrap\|([^}]*)\}\}", r"\1", line)
-            line = re.sub(r"\[\[([^|\]]*)\|([^\]]*)\]\]", r"\2", line)
-            line = re.sub(r"<ref[^>]*/>|<ref.*?</ref>", "", line)
-            p = line.split("|")
-            if len(p) >= 7:
-                rows.append({"name": _strip_markup(p[2]), "party": _strip_markup(p[4]),
-                             "votes": _number(p[6]), "rec": _clean(p[7]) if len(p) > 7 else ""})
-        return sorted(rows, key=lambda r: -r["votes"])
+        return shugiin_rows(t)
     return []
+
+
+def shugiin_rows(template: str) -> list[dict]:
+    """衆議院小選挙区(補欠を含む)の選挙結果テンプレートの候補を得票順に返す。"""
+    rows = []
+    for line in template.split("\n")[2:]:
+        line = re.sub(r"\{\{nowrap\|([^}]*)\}\}", r"\1", line)
+        line = re.sub(r"\[\[([^|\]]*)\|([^\]]*)\]\]", r"\2", line)
+        line = re.sub(r"<ref[^>]*/>|<ref.*?</ref>", "", line)
+        p = line.split("|")
+        if len(p) >= 7:
+            rows.append({"name": _strip_markup(p[2]), "party": _strip_markup(p[4]),
+                         "votes": _number(p[6]), "rec": _clean(p[7]) if len(p) > 7 else ""})
+    return sorted(rows, key=lambda r: -r["votes"])
 
 
 def parse_sangiin(wikitext: str, kai: int) -> tuple[int, list[dict]]:
@@ -111,17 +116,23 @@ def parse_sangiin(wikitext: str, kai: int) -> tuple[int, list[dict]]:
     for t in _templates(wikitext, "参議院選挙区"):
         if "補欠年" in t or not re.search(r"\|\s*選挙回\s*=\s*%d\s*(\||\n)" % kai, t):
             continue
-        # [[記事|表示名]]の中の「|」の直後には「=」が来ないので、そこでは切れない
-        field = lambda k: (m.group(1) if (m := re.search(r"\|\s*" + k + r"\s*=(.*?)(?=\|[^|=\n\[\]{}]*=|\n|\}\}$)", t)) else "")
-        rows = []
-        for n in range(1, 40):
-            if not re.search(r"\|%d氏名=" % n, t):
-                break
-            rows.append({"name": _strip_markup(field(f"{n}氏名")), "party": _strip_markup(field(f"{n}所属")),
-                         "votes": _number(field(f"{n}得票")), "rec": _clean(field(f"{n}推薦"))})
-        seats = int(_number(field("定数")) or 1)
-        return seats, sorted(rows, key=lambda r: -r["votes"])
+        return sangiin_rows(t)
     return 0, []
+
+
+def sangiin_rows(template: str) -> tuple[int, list[dict]]:
+    """参議院選挙区(補欠を含む)の選挙結果テンプレートの(定数, 候補)を得票順に返す。"""
+    t = template
+    # [[記事|表示名]]の中の「|」の直後には「=」が来ないので、そこでは切れない
+    field = lambda k: (m.group(1) if (m := re.search(r"\|\s*" + k + r"\s*=(.*?)(?=\|[^|=\n\[\]{}]*=|\n|\}\}$)", t)) else "")
+    rows = []
+    for n in range(1, 40):
+        if not re.search(r"\|%d氏名=" % n, t):
+            break
+        rows.append({"name": _strip_markup(field(f"{n}氏名")), "party": _strip_markup(field(f"{n}所属")),
+                     "votes": _number(field(f"{n}得票")), "rec": _clean(field(f"{n}推薦"))})
+    seats = int(_number(field("定数")) or 1)
+    return seats, sorted(rows, key=lambda r: -r["votes"])
 
 
 def _raw(title: str) -> str | None:
