@@ -111,3 +111,22 @@ def test_national_by_lines_reports_added_pending_and_errors():
     assert "衆議院甲県第1区" in lines[0] and "10月の補欠選挙" in lines[1] and "X" in lines[2]
     assert ma.national_by_lines(None) == [] and ma.national_by_lines({"added": [], "pending": []}) == []
     assert len(ma.collect_warnings("", [], None, False, False, 0, {"added": [r], "pending": []})) == 1
+
+
+def test_main_gives_up_after_max_failures(tmp_path, monkeypatch):
+    out, notes, calls = _setup_main(tmp_path, monkeypatch, subprocess.CompletedProcess([], 1, "", "network"))
+    assert ma.main([]) == 1
+    assert ma.main([]) == 1
+    assert ma.main([]) == ma.EXIT_GIVE_UP
+    assert ma.main([]) == 0
+    assert len(calls) == 3
+    monkeypatch.setattr(ma, "run_claude", lambda p: subprocess.CompletedProcess([], 0, "報告", ""))
+    assert ma.main(["--force"]) == 0
+    assert not (out / "draft_failures_2026-10").exists()
+
+
+def test_main_success_clears_failure_count(tmp_path, monkeypatch):
+    out, notes, calls = _setup_main(tmp_path, monkeypatch, subprocess.CompletedProcess([], 0, "報告", ""))
+    (out / "draft_failures_2026-10").write_text("2\n")
+    assert ma.main([]) == 0
+    assert not (out / "draft_failures_2026-10").exists()

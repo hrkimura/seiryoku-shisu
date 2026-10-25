@@ -23,6 +23,12 @@ CLAUDE = Path.home() / ".local" / "bin" / "claude"
 # 第0回が2026年8月分。以後、月ごとに1回ずつ進む。
 FIRST_ARTICLE = (2026, 8)
 
+# 失敗の回数は月ごとにここで数える。systemdのStartLimitBurstで数えると、月次実行の
+# 6時間おきの起動(済んだ月はすぐ終わる)に続く起動まで数えられ、成功していても上限に達する。
+MAX_ATTEMPTS = 3
+# この終了コードはunitのRestartPreventExitStatusに書いてあり、取り直しを止めて失敗の通知だけ出す。
+EXIT_GIVE_UP = 3
+
 ALLOWED_TOOLS = [
     "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch",
     "Bash(PYTHONPATH=src python3 -m seiryoku.note_export:*)",
@@ -153,6 +159,17 @@ def draft_log_path(year: int, month: int) -> Path:
     return OUTPUT_DIR / f"draft_log_{year:04d}-{month:02d}.txt"
 
 
+def attempts_path(year: int, month: int) -> Path:
+    return OUTPUT_DIR / f"draft_failures_{year:04d}-{month:02d}"
+
+
+def read_failures(path: Path) -> int:
+    try:
+        return int(path.read_text().strip() or 0)
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
 def run_claude(prompt: str) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
     return subprocess.run(
@@ -183,14 +200,28 @@ def main(argv: list[str] | None = None) -> int:
     if (log.exists() or draft.exists()) and not args.force:
         print(f"第{n}回の下書きはすでにある({draft})")
         return 0
+    failures_file = attempts_path(*ym)
+    if args.force:
+        failures_file.unlink(missing_ok=True)
+    failures = read_failures(failures_file)
+    if failures >= MAX_ATTEMPTS:
+        print(f"第{n}回の下書きは{failures}回失敗したので、取り直さない(--force で再開)")
+        return 0
     proc = run_claude(prompt)
     if proc.returncode != 0:
         print(proc.stdout, proc.stderr, sep="\n")
         # 起動前に下書きがないことを確かめているので、残っているのは途中で止まった下書きだけ。
         # 消しておかないと、取り直しが「すでにある」で止まる。
         draft.unlink(missing_ok=True)
+        failures += 1
+        failures_file.write_text(f"{failures}\n")
+        if failures >= MAX_ATTEMPTS:
+            notify(f"第{n}回の下書きの生成に{failures}回失敗",
+                   "取り直しをやめました。/monthly-draft か --force で書き直してください")
+            return EXIT_GIVE_UP
         notify(f"第{n}回の下書きの生成に失敗", "seiryoku-shisu-draft.service がしばらくして取り直します")
         return 1
+    failures_file.unlink(missing_ok=True)
     log.write_text(proc.stdout, encoding="utf-8")
     print(proc.stdout)
     notify(f"第{n}回の下書きができました", f"notes/dai{n}kai_draft.md(報告は {log.relative_to(ROOT)})")
