@@ -201,15 +201,6 @@
     "chamber": "衆院選",
     "election_a": "2024-10-27",
     "election_b": "2026-02-08",
-    "party": "国民民主党",
-    "local_direction": 1,
-    "actual_direction": -1,
-    "match": false
-  },
-  {
-    "chamber": "衆院選",
-    "election_a": "2024-10-27",
-    "election_b": "2026-02-08",
     "party": "日本共産党",
     "local_direction": 1,
     "actual_direction": -1,
