@@ -309,16 +309,24 @@ def test_format_support_warns_when_fetch_failed():
     assert "取得できなかった" in draft._format_support(s)[0]
 
 
-def test_trend_section_lists_parties_by_change_and_the_impacts():
+def test_trend_section_lists_parties_by_value_with_changes_and_their_error():
+    def ch(months, dx, sd, beyond):
+        return {"months": months, "from": "", "dz": 0.0, "dz_sd": 0.0, "dx": dx, "dx_sd": sd, "beyond_error": beyond}
     t = {"tau": "2026-09-30", "refit_reason": None,
-         "parties": {"A": {"x": 0.5, "x_lo": 0.4, "x_hi": 0.6, "change": 0.01},
-                     "B": {"x": 0.1, "x_lo": 0.05, "x_hi": 0.2, "change": -0.03}},
-         "impacts": [{"party": "B", "vote_date": "2026-09-06", "name": "x市", "level": "市区町村議会",
+         "parties": {"A": {"x": 0.1, "x_lo": 0.05, "x_hi": 0.2, "changes": [ch(1, 0.01, 0.01, False)]},
+                     "B": {"x": 0.5, "x_lo": 0.4, "x_hi": 0.6, "changes": [ch(1, -0.001, 0.02, False),
+                                                                          ch(24, -0.08, 0.02, True)]}},
+         "impacts": [{"party": "A", "vote_date": "2026-09-06", "name": "x市", "level": "市区町村議会",
                       "n": 5.0, "expected": 0.2, "actual": 0.0, "dx": -0.004}]}
-    lines = draft._format_trend(t)
-    body = "\n".join(lines)
+    body = "\n".join(draft._format_trend(t))
     assert body.index("  - B:") < body.index("  - A:")
+    assert "1か月 -0.1(±4.0)" in body
+    assert "24か月 -8.0(±4.0、誤差を超える)" in body
+    assert "1か月 +1.0(±2.0)" in body
+    t["parties"]["A"]["changes"] = [ch(1, -0.0004, 0.01, False)]
+    assert "1か月 0.0(±2.0)" in "\n".join(draft._format_trend(t))
     assert "見込み 20.0% / 実際 0.0%" in body
+    assert "党勢が動いたことは意味しない" in body
     assert draft._format_trend({"error": "x"})[0].startswith("警告")
 
 

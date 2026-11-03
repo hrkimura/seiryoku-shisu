@@ -270,6 +270,11 @@ def _format_support_diff(d: dict | None, horizon: int) -> list[str]:
     return lines
 
 
+def _signed(v: float) -> str:
+    """小数1桁で符号付きにする。丸めて0になるものは「-0.0」とせず符号を付けない。"""
+    return "0.0" if round(v, 1) == 0 else f"{v:+.1f}"
+
+
 def _format_trend(t: dict) -> list[str]:
     """党勢指数v3(state_space_glm.month_facts)を整形する。"""
     if t.get("error"):
@@ -279,20 +284,24 @@ def _format_trend(t: dict) -> list[str]:
         lines.append(f"警告: 議会補選の取り込みに失敗し、前回までの補選で計算した({t['by_election_error']})。")
     if t.get("refit_reason"):
         lines.append(f"党勢指数v3のパラメータを今回推定し直した({t['refit_reason']})。")
-    lines.append(f"党勢指数v3({t['tau']}時点、衆院の議席率の尺度、その月までの選挙による値。"
-                 "括弧内は±2標準偏差の幅、変化は前月末からのポイント差、変化の大きい順):")
-    rows = sorted(t["parties"].items(), key=lambda kv: -abs(kv[1]["change"] or 0.0))
-    for party, r in rows:
-        ch = f"{r['change'] * 100:+.1f}" if r["change"] is not None else "—"
-        lines.append(f"  - {party}: {r['x'] * 100:.1f}%({r['x_lo'] * 100:.1f}〜{r['x_hi'] * 100:.1f}%)、変化 {ch}")
+    lines.append(f"党勢指数v3({t['tau']}時点、衆院の議席率の尺度、その月までの選挙による値、値の大きい順。"
+                 "括弧内は±2標準偏差の幅。変化は、hか月前の値も今月までの選挙で推定し直したうえでの"
+                 "hか月前からのポイント差で、±は2標準偏差。図1の線(その月までの選挙による値)の差とは一致しない。"
+                 "「誤差を超える」と付いたものだけが、党勢が動いたと言える変化):")
+    for party, r in sorted(t["parties"].items(), key=lambda kv: -kv[1]["x"]):
+        chs = [f"{c['months']}か月 {_signed(c['dx'] * 100)}(±{2 * c['dx_sd'] * 100:.1f}"
+               f"{'、誤差を超える' if c['beyond_error'] else ''})" for c in r.get("changes", [])]
+        lines.append(f"  - {party}: {r['x'] * 100:.1f}%({r['x_lo'] * 100:.1f}〜{r['x_hi'] * 100:.1f}%)、"
+                     f"変化 {'、'.join(chs) if chs else '—'}")
     for h, d in (t.get("support_diff") or {}).items():
         lines.extend(_format_support_diff(d, h))
     if t["impacts"]:
-        lines.append("その月の選挙のうち党勢を大きく動かしたもの(選挙前の見込みと実際の議席の割合、"
-                     "党勢の動きのポイント換算、動きの大きい順):")
+        lines.append("その月の選挙のうち、見込みと結果のずれで推定値を大きく動かしたもの(選挙前の見込みと"
+                     "実際の議席の割合、推定値の動きのポイント換算、動きの大きい順)。推定値の動きは1か月の"
+                     "選挙だけで見た値で、党勢が動いたことは意味しない:")
         for c in t["impacts"]:
             lines.append(f"  - {c['party']} {c['vote_date']} {c['name']}({c['level']}、{c['n']:.0f}議席): "
-                         f"見込み {c['expected'] * 100:.1f}% / 実際 {c['actual'] * 100:.1f}%、党勢 {c['dx'] * 100:+.2f}")
+                         f"見込み {c['expected'] * 100:.1f}% / 実際 {c['actual'] * 100:.1f}%、推定値 {c['dx'] * 100:+.2f}")
     return lines
 
 

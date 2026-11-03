@@ -277,6 +277,40 @@ def test_smoother_bridges_two_national_elections_like_a_brownian_bridge():
     assert m_end[0] == pytest.approx(z1, abs=1e-6)
 
 
+def _two_exact_national_elections():
+    d0 = date(2020, 1, 1)
+    events = [Event(d0, "衆院選", 1.2e8, 465.0, {"A": 100 / 465, "B": 365 / 465}, ""),
+              Event(d0 + timedelta(days=730), "衆院選", 1.2e8, 465.0, {"A": 200 / 465, "B": 265 / 465}, "")]
+    obs = glm.glm_observations(events, "A", d0, filter_levels=False)
+    params = glm.GlmParams(q_x=0.2, phi={}, ell=0.5, sigma_national=1e-6)
+    z0, _ = glm.national_logit(obs.k[0], obs.n[0])
+    z1, _ = glm.national_logit(obs.k[1], obs.n[1])
+    return obs, params, z0, z1
+
+
+def test_change_between_two_exactly_observed_elections_is_known_without_error():
+    obs, params, z0, z1 = _two_exact_national_elections()
+    dz, sd = glm.change_posterior(obs, params, obs.t[0], obs.t[1])
+    assert dz == pytest.approx(z1 - z0, abs=1e-5)
+    assert sd < 1e-3
+
+
+def test_change_from_a_bridged_point_adds_the_bridge_and_the_walk_after_the_last_election():
+    obs, params, z0, z1 = _two_exact_national_elections()
+    t_mid, t_end = (obs.t[0] + obs.t[1]) / 2, obs.t[1] + 6.0
+    dz, sd = glm.change_posterior(obs, params, t_mid, t_end)
+    assert dz == pytest.approx(z1 - (z0 + z1) / 2, abs=1e-5)
+    var = params.q_x * (obs.t[1] - obs.t[0]) / 4 + params.q_x * 6.0
+    assert sd ** 2 == pytest.approx(var, rel=1e-3)
+
+
+def test_change_after_the_last_observation_is_the_prior_random_walk():
+    obs, params, _, _ = _two_exact_national_elections()
+    dz, sd = glm.change_posterior(obs, params, obs.t[1] + 1.0, obs.t[1] + 13.0)
+    assert dz == pytest.approx(0.0, abs=1e-9)
+    assert sd == pytest.approx(math.sqrt(params.q_x * 12.0), rel=1e-6)
+
+
 def test_monthly_contributions_add_up_to_the_change_of_the_estimate():
     events = _simulate(n_days=2 * 365, seed=3)
     obs = glm.glm_observations(events, "A", START)
@@ -416,14 +450,56 @@ def test_binomial_national_error_is_wider_for_a_party_with_few_seats():
     assert sd_large * x * (1 - x) == pytest.approx(math.sqrt(x * (1 - x) / 465), rel=0.01)
 
 
-def test_month_facts_reports_the_latest_filtered_value_and_the_biggest_impacts():
+def test_month_facts_reports_the_latest_filtered_value_its_changes_and_the_biggest_impacts():
     def row(tau, x):
         return {"tau": tau, "x": x, "x_lo": x / 2, "x_hi": x * 2, "x_f": x, "x_f_lo": x / 2, "x_f_hi": x * 2}
     c = [{"vote_date": "2026-09-06", "level": "市区町村議会", "name": f"市{i}", "n": 5.0,
           "actual": 0.2, "expected": 0.1, "dz": dz} for i, dz in enumerate((0.01, -0.3, 0.05))]
+    ch = [{"months": 1, "from": "2026-08-31", "dz": 0.01, "dz_sd": 0.15, "dx": 0.001, "dx_sd": 0.016,
+           "beyond_error": False}]
     result = {"tau": "2026-09-30", "parties": {"A": {"series": [row("2026-08-31", 0.10), row("2026-09-30", 0.12)],
-                                                      "contributions": c}}}
+                                                      "contributions": c, "changes": ch}}}
     f = glm.month_facts(result, top=2)
-    assert f["parties"]["A"]["change"] == pytest.approx(0.02)
+    assert f["parties"]["A"]["x"] == pytest.approx(0.12)
+    assert f["parties"]["A"]["changes"] == ch
     assert [x["name"] for x in f["impacts"]] == ["市1", "市2"]
     assert f["impacts"][0]["dx"] == pytest.approx(0.12 * 0.88 * -0.3)
+
+
+
+@pytest.mark.parametrize("check", ["national_online_check", "national_interpolation_check"])
+def test_ablations_change_what_the_checks_fit(monkeypatch, check):
+    events = _simulate(n_days=3 * 365, seed=5)
+    obs = {"A": glm.glm_observations(events, "A", START)}
+    nat = sorted({e.vote_date for e in events if e.level == "衆院選"})
+    shu = [p for d in nat for p in _pts(2.0, 1.0, (d,))]
+    san = _pts(1.5, 0.6, (date(2016, 7, 10), date(2019, 7, 21), date(2022, 7, 10)))
+    seen = []
+
+    def fake_pooled_fit(ex, subs, ells, kw):
+        seen.append((subs, ells, kw))
+        return 0.03, {p: glm.GlmParams(q_x=0.03, phi={}, ell=ells[p], tau2={"市区町村議会": 0.5} if kw[p]["muni"] else {},
+                                       local_alpha=kw[p]["local_alpha"], **kw[p]["san"]) for p in subs}
+
+    monkeypatch.setattr(glm, "pooled_fit", fake_pooled_fit)
+    fitted = {}
+    for a in (None, *glm.ABLATIONS):
+        seen.clear()
+        getattr(glm, check)(obs, shu, san, workers=1, ablation=a)
+        fitted[a] = seen[0]
+    subs, ells, kw = fitted[None]
+    assert kw["A"]["muni"] and kw["A"]["local_alpha"] and ells["A"] != 1.0 and "市区町村議会" in subs["A"].level
+    assert set(fitted["国政のみ"][0]["A"].level) <= set(ss.NATIONAL_LEVELS)
+    assert not fitted["地盤なし"][2]["A"]["muni"]
+    assert not fitted["水準差なし"][2]["A"]["local_alpha"]
+    assert fitted["負荷1"][1]["A"] == 1.0
+    with pytest.raises(ValueError):
+        getattr(glm, check)(obs, shu, san, workers=1, ablation="不明")
+
+def test_without_local_alpha_the_council_level_state_is_never_updated():
+    events = _simulate(n_days=2 * 365, seed=3)
+    obs = glm.glm_observations(events, "A", START)
+    p, _ = glm.fit_params(obs, ell=0.5, muni=True, maxiter=30, q_x=0.03, local_alpha=False)
+    r = glm.run_filter(obs, p)
+    j = 2 + r.state_levels.index("市区町村議会")
+    assert not p.local_alpha and r.mean[j] == 0.0 and r.cov[j, j] == pytest.approx(glm.PRIOR_VAR_ALPHA)

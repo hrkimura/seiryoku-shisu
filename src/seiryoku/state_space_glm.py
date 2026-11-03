@@ -32,6 +32,8 @@ PRIOR_VAR_SLOPE = 0.01
 SANGIIN = "参院選"
 MAYOR_LEVELS = ("市区町村長", "都道府県知事")
 COUNCIL_LEVELS = ("市区町村議会", "都道府県議会")
+# 検証で外すモデルの部品。国政のみは地方選挙も補選も使わない形
+ABLATIONS = ("国政のみ", "地盤なし", "水準差なし", "負荷1")
 
 
 
@@ -148,6 +150,8 @@ class GlmParams:
     # 国政選挙にだけ現れる党勢の部分z_Nのランダムウォークの分散。正なら状態の末尾にz_Nを加え、
     # 国政の党勢をz+z_N、地方選挙の負荷はzだけにかける。z_Nは始点で0とする(水準はzが持つ)。
     q_nat: float = 0.0
+    # Falseなら地方議会と地方議会の補選の水準差alphaを0に固定する(状態の次元は変えない)
+    local_alpha: bool = True
 
     def dynamics(self) -> ss.Params:
         return ss.Params(q_x=self.q_x, q_b=0.0, sigma2={}, a=0.0, slope=self.slope,
@@ -305,11 +309,11 @@ def run_filter(obs: GlmObservations, params: GlmParams, until: float | None = No
                 trace.append([t, mp, Cp, mp, Cp])
         lv = obs.level[i]
         h = np.zeros(k_state)
-        j = idx.get(lv)
-        if j is not None:
-            h[j] = 1.0
         # 得票率の観測は国政選挙と同じく正規分布で、地方の負荷も自治体の地盤も持たない
         national = lv in ss.NATIONAL_LEVELS or lv == NATIONAL_VOTE_BY
+        j = idx.get(lv)
+        if j is not None and (params.local_alpha or national or lv in NATIONAL_BY_LEVELS):
+            h[j] = 1.0
         if lv == NATIONAL_VOTE_BY:
             h += params.vote_load * g_nat
             y_nat, sd_nat = _logit(obs.y[i]), math.sqrt(params.vote_var)
@@ -401,7 +405,8 @@ def fit_params(obs: GlmObservations, ell: float | None = None, until: float | No
                jumps: bool = False, muni: bool = False, san: dict | None = None,
                sigma_national: float | None = None, prior_var: float = PRIOR_VAR_Z,
                national_dev: bool = False, starts: int = 3, maxiter: int = 300,
-               phi_mode: str = "none", q_x: float | None = None) -> tuple[GlmParams, float]:
+               phi_mode: str = "none", q_x: float | None = None,
+               local_alpha: bool = True) -> tuple[GlmParams, float]:
     """最尤推定。ellを与えなければ地方の負荷も推定する。尤度は局所解を持つことがあるので、
     q_xの初期値を変えたstarts通りの初期値から始め、最も尤度の高い解を採る。
 
@@ -454,7 +459,7 @@ def fit_params(obs: GlmObservations, ell: float | None = None, until: float | No
         return GlmParams(vote_var=vote_var, q_x=math.exp(z[0]), phi={lv: math.exp(-z[1 + (i if P > 1 else 0)]) for i, lv in enumerate(dispersed)} if P else {},
                          ell=ell_v, slope=slope, jump_rate=jump_rate, jump_var=jump_var, tau2=tau2,
                          sigma_national=sigma_national, prior_var=prior_var,
-                         q_nat=math.exp(z[k]) if national_dev else 0.0, **(san or {}))
+                         q_nat=math.exp(z[k]) if national_dev else 0.0, local_alpha=local_alpha, **(san or {}))
 
     def nll(z):
         return -run_filter(obs, unpack(z), until=until, state_levels=levels).loglik
@@ -517,15 +522,24 @@ def _subset(obs: GlmObservations, keep: np.ndarray) -> GlmObservations:
                            y=obs.y[idx], events=[obs.events[i] for i in idx])
 
 
+def _ablated_kw(ablation: str | None, san: dict) -> dict:
+    if ablation is not None and ablation not in ABLATIONS:
+        raise ValueError(f"外す部品は{ABLATIONS}のどれか: {ablation}")
+    return {"muni": ablation != "地盤なし", "local_alpha": ablation != "水準差なし", "san": san}
+
+
 def national_interpolation_check(obs_by_party: dict[str, GlmObservations], seat_vote: list, seat_vote_san: list,
                                  workers: int | None = None, local: bool = True,
-                                 drop_levels: frozenset[str] = frozenset()) -> dict[str, list[dict]]:
+                                 drop_levels: frozenset[str] = frozenset(),
+                                 ablation: str | None = None) -> dict[str, list[dict]]:
     """国政選挙を1回ずつ除き、残りの全期間のデータ(前後両側)で平滑化してその結果を再現できるかを見る。
     除いた選挙の議席と得票の点は、負荷、参院選のつなぎ、全党共通のqの計算からも除く。qは、
     その選挙を除く対象になる政党(その選挙が最初の国政選挙でない政党)の対数尤度の合計で決める。
     local=Falseなら地方選挙を使わない(国政選挙だけの補間)。drop_levelsの階層の選挙も使わず、
-    負荷の地方の占有率も残りの議会から求める。"""
+    負荷の地方の占有率も残りの議会から求める。ablationはABLATIONSのどれかで、その部品を外した形で行う。"""
     from concurrent.futures import ProcessPoolExecutor
+
+    local = local and ablation != "国政のみ"
 
     obs_by_party = {p: _subset(o, np.array([lv not in drop_levels for lv in o.level]))
                     for p, o in obs_by_party.items()}
@@ -548,7 +562,9 @@ def national_interpolation_check(obs_by_party: dict[str, GlmObservations], seat_
                 if not local:
                     keep &= national[party]
                 subs[party], ells[party] = _subset(o, keep), ell
-                kw[party] = {"muni": True, "san": sangiin_link(shu, san)}
+                kw[party] = _ablated_kw(ablation, sangiin_link(shu, san))
+                if ablation == "負荷1":
+                    ells[party] = 1.0
             if not subs:
                 continue
             q, params_by_party = pooled_fit(ex, subs, ells, kw)
@@ -571,10 +587,11 @@ def national_interpolation_check(obs_by_party: dict[str, GlmObservations], seat_
 
 def national_online_check(obs_by_party: dict[str, GlmObservations], seat_vote: list, seat_vote_san: list,
                           workers: int | None = None,
-                          drop_levels: frozenset[str] = frozenset()) -> dict[str, list[dict]]:
+                          drop_levels: frozenset[str] = frozenset(),
+                          ablation: str | None = None) -> dict[str, list[dict]]:
     """各国政選挙を、その投票日より前のデータだけで推定したモデルで予測する(月次の本番と同じ
     オンラインの使い方)。負荷、参院選のつなぎ、全党共通のqもその日より前のデータで決め直す。
-    投票日が同じ地方選挙も使わない。結果の形はnational_interpolation_checkと同じ。"""
+    投票日が同じ地方選挙も使わない。結果の形とablationはnational_interpolation_checkと同じ。"""
     from concurrent.futures import ProcessPoolExecutor
 
     obs_by_party = {p: _subset(o, np.array([lv not in drop_levels for lv in o.level]))
@@ -591,8 +608,11 @@ def national_online_check(obs_by_party: dict[str, GlmObservations], seat_vote: l
                 ell = party_loading(o, seat_vote, seat_vote_san, party, d)
                 if ell is None:
                     continue
-                subs[party], ells[party] = _subset(o, np.array([e.vote_date < d for e in o.events])), ell
-                kw[party] = {"muni": True, "san": sangiin_link(seat_vote, seat_vote_san, d)}
+                keep = np.array([e.vote_date < d for e in o.events])
+                if ablation == "国政のみ":
+                    keep &= national[party]
+                subs[party], ells[party] = _subset(o, keep), 1.0 if ablation == "負荷1" else ell
+                kw[party] = _ablated_kw(ablation, sangiin_link(seat_vote, seat_vote_san, d))
             if not subs:
                 continue
             q, params_by_party = pooled_fit(ex, subs, ells, kw)
@@ -646,6 +666,51 @@ def filtered_series(obs: GlmObservations, params: GlmParams, ends: list[date]) -
         g = params.national_vector(len(m))
         out.append((float(g @ m), math.sqrt(max(float(g @ C @ g) + params.q_x * max(te - t, 0.0), 0.0))))
     return out
+
+
+# 記事に載せる変化の期間(か月)。1か月の変化はほぼ誤差だけで、12か月でも誤差を超える党はまれ
+# (2026-10時点の計算)なので、国政選挙をまたぐ24か月まで並べる
+CHANGE_HORIZONS = (1, 12, 24)
+
+
+def change_posterior(obs: GlmObservations, params: GlmParams, t0: float, t1: float) -> tuple[float, float]:
+    """時刻t1までの観測による、党勢の変化z(t1)-z(t0)の平均と標準偏差。平均は平滑化の値(seriesのx)の差で、
+    フィルタの値の差(月ごとの選挙の寄与の和、図の1段目の線の差)とは違う。t0での値もt1までの観測で推定し直すので、
+    観測が弱ければ両端が一緒に動き、変化の平均は小さく、標準偏差は事前の√(q_x(t1-t0))に近くなる。"""
+    trace: list = []
+    r = run_filter(obs, params, until=t1, trace=trace)
+    dyn = params.dynamics()
+    k_state = len(r.mean)
+    nat_idx = [k_state - 1] if params.q_nat > 0 else []
+
+    def insert(t: float) -> int:
+        k = bisect.bisect_right([e[0] for e in trace], t) - 1
+        if trace[k][0] == t:
+            return k
+        mp, Cp = ss._collapse(ss._split((trace[k][3], trace[k][4]), t - trace[k][0], dyn, nat_idx))
+        trace.insert(k + 1, [t, mp, Cp, mp, Cp])
+        return k + 1
+
+    insert(t1)
+    trace[-1][3:5] = r.mean, r.cov
+    s = insert(t0)
+    n = len(trace)
+    ms, Cs, Js = [None] * n, [None] * n, [None] * n
+    ms[-1], Cs[-1] = trace[-1][3], trace[-1][4]
+    for k in range(n - 2, -1, -1):
+        _, _, _, mf, Cf = trace[k]
+        t_next, mp1, Cp1 = trace[k + 1][:3]
+        F = ss._transition(t_next - trace[k][0], dyn, k_state)
+        Js[k] = Cf @ F.T @ np.linalg.pinv(Cp1)
+        ms[k] = mf + Js[k] @ (ms[k + 1] - mp1)
+        Cs[k] = Cf + Js[k] @ (Cs[k + 1] - Cp1) @ Js[k].T
+    # 平滑化の1期ずれの共分散 Cov(x_k, x_n | D) = J_k Cov(x_{k+1}, x_n | D) を末尾から辿る
+    cross = Cs[-1]
+    for k in range(n - 2, s - 1, -1):
+        cross = Js[k] @ cross
+    g = params.national_vector(k_state)
+    var = float(g @ Cs[s] @ g + g @ Cs[-1] @ g - 2 * g @ cross @ g)
+    return float(g @ (ms[-1] - ms[s])), math.sqrt(max(var, 0.0))
 
 
 def level_movement(obs: GlmObservations, params: GlmParams, ends: list[date]) -> list[dict[str, float]]:
@@ -814,16 +879,17 @@ def estimate_all(obs_by_party: dict[str, GlmObservations], ells: dict[str, float
 
 
 def month_facts(result: dict, top: int = 10) -> dict:
-    """記事の事実データに載せる党勢指数v3の節。各党の最新月の値(その月までの選挙による値)と
-    前月からの変化、その月の選挙のうち党勢を占有率の尺度で大きく動かしたもの。dzの党ごとの和は、
-    最新月のxのlogitの前月からの変化にちょうど等しい。"""
+    """記事の事実データに載せる党勢指数v3の節。各党の最新月の値(その月までの選挙による値)、
+    CHANGE_HORIZONSか月前からの変化とその標準偏差(change_posterior)、その月の選挙のうち
+    見込みと結果のずれで推定値を大きく動かしたもの。dzの党ごとの和はフィルタの値の前月からの変化で、
+    真の党勢の変化の推定ではない(前月の値もその後の選挙で推定し直すと、変化はほとんど残らない)。"""
     parties, impacts = {}, []
     for p, r in result["parties"].items():
         s = r["series"]
-        cur, prev = s[-1], (s[-2] if len(s) > 1 else None)
+        cur = s[-1]
         x = cur.get("x_f", cur["x"])
         parties[p] = {"x": x, "x_lo": cur.get("x_f_lo", cur["x_lo"]), "x_hi": cur.get("x_f_hi", cur["x_hi"]),
-                      "change": x - prev.get("x_f", prev["x"]) if prev else None}
+                      "changes": r.get("changes", [])}
         for c in r.get("contributions", []):
             # 占有率の尺度での動きは、dzが小さければx(1-x)dzで近似できる
             impacts.append({"party": p, **c, "dx": x * (1 - x) * c["dz"]})
@@ -907,7 +973,16 @@ def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
                            "x_lo": _expit(z - 2 * se), "x_hi": _expit(z + 2 * se),
                            "x_f": _expit(zf), "x_f_lo": _expit(zf - 2 * sf), "x_f_hi": _expit(zf + 2 * sf)})
         nc = nowcast(obs, params, tau)
+        changes = []
+        for h in CHANGE_HORIZONS:
+            if len(ends) > h:
+                dz, sd = change_posterior(obs, params, times[-1 - h], times[-1])
+                x0 = _expit(nc.z - dz)
+                xm = _expit(nc.z - dz / 2)
+                changes.append({"months": h, "from": ends[-1 - h].isoformat(), "dz": dz, "dz_sd": sd,
+                                "dx": nc.x - x0, "dx_sd": sd * xm * (1 - xm), "beyond_error": abs(dz) > 2 * sd})
         out["parties"][party] = {
+            "changes": changes,
             "x": nc.x, "x_lo": nc.x_lo, "x_hi": nc.x_hi, "alpha": nc.alpha,
             "params": {"ell": params.ell, "q_x": params.q_x, "phi": params.phi, "tau2": params.tau2,
                        "san_load": params.san_load, "san_offset": params.san_offset},

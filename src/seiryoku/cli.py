@@ -297,8 +297,9 @@ def _print_trend_summary(t: dict) -> None:
     for line in monthly_article.national_by_lines(t.get("national_by")):
         print("  " + line)
     for party, r in sorted(t["parties"].items(), key=lambda kv: -kv[1]["x"]):
-        ch = f"{r['change'] * 100:+.1f}" if r["change"] is not None else "—"
-        print(f"  {party}: {r['x'] * 100:.1f}%(前月差 {ch})")
+        chs = [f"{c['months']}か月 {c['dx'] * 100:+.1f}±{2 * c['dx_sd'] * 100:.1f}{'*' if c['beyond_error'] else ''}"
+               for c in r.get("changes", [])]
+        print(f"  {party}: {r['x'] * 100:.1f}%(変化 {'、'.join(chs) or '—'}、*は誤差を超える)")
     for h, d in (t.get("support_diff") or {}).items():
         if d["points"]:
             line = f"  支持率の{h}か月差との散布図: {len(d['periods'])}期間・{d['n']}点"
