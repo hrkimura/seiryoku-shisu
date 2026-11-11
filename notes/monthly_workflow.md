@@ -10,7 +10,7 @@
 |---|---|---|
 | 毎月2日 | 選挙結果キャッシュの更新クロール(`seiryoku.refresh_cli`)。止まったら毎日11時のウォッチドッグが再開させる。月末の日曜の選挙の結果が載るのを待って2日に始める | 数時間〜十数時間(休止をはさむと2〜3日) |
 | クロールの完了後 | 月次実行(`seiryoku.cli`)。国政と議会の補選の取り込み、v1とv3の計算、図、記事の事実データ、記事用の図のコピー、警告のまとめと通知 | 10〜20分(推定し直す月は検証も回すので、さらに40分ほど) |
-| 月次実行の直後 | 下書きの生成(`seiryoku.monthly_article`、`seiryoku-shisu-draft.service`)。`claude -p` が notes/monthly_draft_prompt.md の指示で下書きを書き、note用に変換する | 10〜30分 |
+| 月次実行の直後 | 下書きの生成(`seiryoku.monthly_article`、`seiryoku-shisu-draft.service`)。`claude -p` が notes/monthly_draft_prompt.md の指示で下書きを書き、そのまま公開できるnote用ファイルに変換する | 10〜30分 |
 | 毎日12時 | 政党支持率の取得(`seiryoku.support_fetch`)。更新日が新しければ追記する | 数秒 |
 
 三春さんの記事は不定期に更新され、前の値は上書きされて残らない。毎日取りに行くのは、更新を取りこぼさないためと、v3の月末の値と比べるときに支持率を月末にそろえる(前後の更新から補間する)ためである。通信に失敗した日は、翌日の実行が取り直す。
@@ -34,14 +34,14 @@
 - `output/trend/state_space_glm_YYYY-MM-DD.json`: v3の計算結果
 - `notes/images/daiNkai_trend_v2.png`、`daiNkai_trend_v2_vs_support.png`、`daiNkai_trend_v2_support_diff.png`: 記事用にコピーした図(差の散布図は、出ている中でいちばん長い期間のもの)。第N回は2026年8月分を第0回として月から決まる
 
-下書きの生成の出力は `notes/daiNkai_draft.md`、`notes/daiNkai_draft_for_note.md` と、Claudeの報告 `output/draft_log_YYYY-MM.txt`(警告、要点、字数、自信のない箇所、コミットコマンド)である。
+下書きの生成の出力は `notes/daiNkai_draft.md`、`notes/daiNkai_draft_for_note.md` と、Claudeの報告 `output/draft_log_YYYY-MM.txt`(警告、要点、字数、断定を避けた箇所・外した事柄、コミットコマンド)である。
 
 図のファイル名は、記事や手順の参照を変えずに済むよう、v2のときのまま(`trend_v2_*.png`)にしてある。
 
 ## 毎月の手順
 
 1. **通知が来たら、`output/draft_log_YYYY-MM.txt` を読む。** 月次実行の警告には、下書きを書くClaudeが先に対処している(`notes/monthly_draft_prompt.md`)。略称表にない政党名は調べて略称表に加え、補選やv3の取り込みの失敗は原因を調べて直せるものは直し、データやコードを直したときは月次実行をやり直してから書く。報告には警告ごとにどう対処したかが書かれているので、「直せなかった」とあるものだけ対応する。パラメータを推定し直した月は、新しい党の結成・合流・分裂による系譜の見直し案も報告に入る(採るかどうかは人が決める)。
-2. **下書きを確かめて公開する。** 下書きを直したら `PYTHONPATH=src python3 -m seiryoku.note_export notes/daiNkai_draft.md` で変換し直し(字数も表示される)、note用ファイルを貼る。画像はアップロードし、キャプション欄に「[キャプション: …]」の中身を入れる。note用ファイルを直接直した場合は、同じ修正を下書きにも入れる(変換し直すと消えるため)。
+2. **公開する。** 下書きは読まずに、note用ファイル(`notes/daiNkai_draft_for_note.md`、下書きを書くClaudeが変換済み)をそのまま貼る。画像はアップロードし、キャプション欄に「[キャプション: …]」の中身を入れる。公開後に読んで直したいところがあれば、Claudeに頼む。Claudeは下書き(`notes/daiNkai_draft.md`)を直し、`PYTHONPATH=src python3 -m seiryoku.note_export notes/daiNkai_draft.md` で変換し直す(字数も表示される)。note用ファイルだけを直すと、次に変換したときに消える。
 3. **公開版を照合する(任意)。** 公開URLをClaudeに渡して「公開版を照合して」と頼むと、本文と図表を手元のファイルと突き合わせる。
 4. **コミットする。** 報告の最後のコマンドを実行する。
 
