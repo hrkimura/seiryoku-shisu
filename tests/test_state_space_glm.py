@@ -225,7 +225,7 @@ def test_level_movement_sums_the_absolute_updates_by_month_and_level():
     mv = glm.level_movement(obs, params, ends)
     c: list = []
     glm.run_filter(obs, params, contrib=c)
-    total = sum(abs(dz) for i, _, dz in c if obs.events[i].vote_date <= ends[-1])
+    total = sum(abs(dz) for i, _, dz, _ in c if obs.events[i].vote_date <= ends[-1])
     assert sum(sum(m.values()) for m in mv) == pytest.approx(total)
     assert set().union(*mv) <= set(obs.level)
 
@@ -450,11 +450,13 @@ def test_binomial_national_error_is_wider_for_a_party_with_few_seats():
     assert sd_large * x * (1 - x) == pytest.approx(math.sqrt(x * (1 - x) / 465), rel=0.01)
 
 
-def test_month_facts_reports_the_latest_filtered_value_its_changes_and_the_biggest_impacts():
+def test_month_facts_reports_the_latest_filtered_value_its_changes_and_only_significant_impacts():
     def row(tau, x):
         return {"tau": tau, "x": x, "x_lo": x / 2, "x_hi": x * 2, "x_f": x, "x_f_lo": x / 2, "x_f_hi": x * 2}
+    # 市3はp=0.06で有意でないので、dzが最も大きくても載らない
     c = [{"vote_date": "2026-09-06", "level": "市区町村議会", "name": f"市{i}", "n": 5.0,
-          "actual": 0.2, "expected": 0.1, "dz": dz} for i, dz in enumerate((0.01, -0.3, 0.05))]
+          "actual": 0.2, "expected": 0.1, "dz": dz, "p": pv}
+         for i, (dz, pv) in enumerate(((0.01, 1e-4), (-0.3, 1e-5), (0.05, 1e-3), (0.4, 0.06)))]
     ch = [{"months": 1, "from": "2026-08-31", "dz": 0.01, "dz_sd": 0.15, "dx": 0.001, "dx_sd": 0.016,
            "beyond_error": False}]
     result = {"tau": "2026-09-30", "parties": {"A": {"series": [row("2026-08-31", 0.10), row("2026-09-30", 0.12)],
@@ -464,6 +466,39 @@ def test_month_facts_reports_the_latest_filtered_value_its_changes_and_the_bigge
     assert f["parties"]["A"]["changes"] == ch
     assert [x["name"] for x in f["impacts"]] == ["市1", "市2"]
     assert f["impacts"][0]["dx"] == pytest.approx(0.12 * 0.88 * -0.3)
+    assert f["n_tested"] == 4
+
+
+def test_holm_rejects_in_order_and_stops_at_the_first_failure():
+    assert glm.holm_significant([0.001, 0.04, 0.012, 0.5]) == [True, False, True, False]
+    assert glm.holm_significant([0.02, 0.02]) == [True, True]
+    assert glm.holm_significant([0.03, 0.03]) == [False, False]
+    assert glm.holm_significant([]) == []
+
+
+def test_predictive_tails_match_the_binomial_without_state_uncertainty():
+    from scipy.stats import binom
+    up, lo = glm._predictive_tails(glm._logit(0.1), 0.0, 4.0, 16.0, math.inf)
+    assert up == pytest.approx(binom.sf(4, 16, 0.1) + 0.5 * binom.pmf(4, 16, 0.1), rel=1e-6)
+    assert up + lo == pytest.approx(1.0)
+
+
+def test_predictive_tails_widen_with_state_uncertainty_and_overdispersion():
+    base, _ = glm._predictive_tails(glm._logit(0.04), 0.0, 2.0, 2.0, math.inf)
+    wider, _ = glm._predictive_tails(glm._logit(0.04), 1.0, 2.0, 2.0, math.inf)
+    over, _ = glm._predictive_tails(glm._logit(0.04), 0.0, 2.0, 2.0, 5.0)
+    assert wider > base and over > base
+
+
+def test_monthly_contributions_give_pvalues_only_for_the_month():
+    events = _simulate(n_days=2 * 365, seed=3)
+    obs = glm.glm_observations(events, "A", START)
+    params = glm.GlmParams(q_x=0.05, phi={"市区町村議会": 30.0}, ell=0.5, tau2={"市区町村議会": 0.3})
+    parts = glm.monthly_contributions(obs, params, date(2019, 3, 31), date(2019, 4, 30))
+    assert parts and all(0.0 <= c["p"] <= 1.0 for c in parts)
+    contrib: list = []
+    glm.run_filter(obs, params, contrib=contrib)
+    assert all(c[3] is None for c in contrib)
 
 
 

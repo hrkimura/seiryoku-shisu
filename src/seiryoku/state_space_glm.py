@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 from scipy.optimize import minimize
 from scipy.special import betaln, psi, zeta
+from scipy.stats import betabinom, binom
 
 from . import state_space as ss
 from .by_elections import BY_LEVELS, NATIONAL_BY_LEVELS, NATIONAL_VOTE_BY, SANGIIN_BY
@@ -222,6 +223,39 @@ def _local_loglik(eta: float, k: float, n: float, phi: float) -> tuple[float, fl
     return float(ll), float(l_mu * dmu), float(l_mumu * dmu ** 2 + l_mu * dmu * (1 - 2 * mu))
 
 
+_GH_NODES, _GH_WEIGHTS = np.polynomial.hermite_e.hermegauss(30)
+
+
+def _predictive_tails(m_eta: float, s2: float, k: float, n: float, phi: float) -> tuple[float, float]:
+    """etaの予測分布N(m_eta, s2)とベータ二項分布の観測による、議席数が実際より多くなる確率と
+    少なくなる確率(どちらも実際と等しい確率の半分を含むmid-p)。"""
+    N = int(round(n))
+    if N < 1:
+        return 0.5, 0.5
+    kk = min(max(int(round(k)), 0), N)
+    mu = np.clip(1 / (1 + np.exp(-(m_eta + math.sqrt(max(s2, 0.0)) * _GH_NODES))), 1e-12, 1 - 1e-12)
+    j = np.arange(N + 1)[None, :]
+    if N == 1 or phi > 1e7:
+        pmf_i = binom.pmf(j, N, mu[:, None])
+    else:
+        pmf_i = betabinom.pmf(j, N, (mu * phi)[:, None], ((1 - mu) * phi)[:, None])
+    pmf = _GH_WEIGHTS @ pmf_i / _GH_WEIGHTS.sum()
+    half = 0.5 * pmf[kk]
+    return float(pmf[kk + 1:].sum() + half), float(pmf[:kk].sum() + half)
+
+
+def holm_significant(pvalues: list[float], alpha: float = 0.05) -> list[bool]:
+    """Holm法で、全体の第1種の誤りをalpha以下に抑えたときに有意となるもの。"""
+    order = sorted(range(len(pvalues)), key=lambda i: pvalues[i])
+    out = [False] * len(pvalues)
+    m = len(pvalues)
+    for rank, i in enumerate(order):
+        if pvalues[i] > alpha / (m - rank):
+            break
+        out[i] = True
+    return out
+
+
 def _laplace(m_eta: float, s2: float, k: float, n: float, phi: float) -> tuple[float | None, float, float]:
     """etaの事前分布N(m_eta, s2)と観測から、同じ事後分布を与える正規の擬似観測
     (値, 分散)と、ラプラス近似の対数周辺尤度を返す。対数尤度がその点で凸でなく
@@ -258,9 +292,11 @@ class GlmFilterResult:
 
 def run_filter(obs: GlmObservations, params: GlmParams, until: float | None = None,
                state_levels: list[str] | None = None, trace: list | None = None,
-               contrib: list | None = None) -> GlmFilterResult:
+               contrib: list | None = None, predictive_after: float | None = None) -> GlmFilterResult:
     """traceにリストを渡すと、観測のある時刻ごとに[t, 予測平均, 予測分散, 更新後平均, 更新後分散]を
-    積む(平滑化用)。contribにリストを渡すと、観測ごとに(添字, 期待される占有率, 更新によるzの変化)を積む。
+    積む(平滑化用)。contribにリストを渡すと、観測ごとに(添字, 期待される占有率, 更新によるzの変化,
+    予測のp値)を積む。p値はその観測の直前までのデータによる予測分布での両側のmid-pで、時刻が
+    predictive_afterより後の観測だけ計算する(それ以外はNone。全期間で計算すると重い)。
     傾きがなければ予測でzの平均は動かないので、zの変化は観測ごとの更新の和にちょうど分かれる。"""
     levels = state_levels if state_levels is not None else sorted(
         {lv for lv in obs.level if lv != ss.REFERENCE_LEVEL})
@@ -341,6 +377,8 @@ def run_filter(obs: GlmObservations, params: GlmParams, until: float | None = No
             expected = _expit(float(h @ m_before) + (um[r] if r is not None else 0.0))
         new = []
         u_post = []
+        want_p = contrib is not None and predictive_after is not None and t > predictive_after
+        tail_up = tail_lo = 0.0
         for w, mc, Cc in comps:
             if w <= 0:
                 continue
@@ -356,6 +394,14 @@ def run_filter(obs: GlmObservations, params: GlmParams, until: float | None = No
                 lim = math.sqrt(max(s2, 0.0) * uv[r])
                 s2_raw = max(s2, 0.0) + uv[r]
                 s2 = max(s2_raw + 2 * max(min(hc, 0.999 * lim), -0.999 * lim), 1e-6 * s2_raw, 1e-12)
+            if want_p:
+                if national:
+                    zt = (y_nat - m_eta) / math.sqrt(s2 + sd_nat ** 2)
+                    up, lo = 0.5 * math.erfc(zt / math.sqrt(2)), 0.5 * math.erfc(-zt / math.sqrt(2))
+                else:
+                    up, lo = _predictive_tails(m_eta, s2, obs.k[i], obs.n[i], params.phi.get(lv, math.inf))
+                tail_up += w * up
+                tail_lo += w * lo
             if national:
                 R, y_p = sd_nat ** 2, y_nat
                 S = s2 + R
@@ -390,7 +436,8 @@ def run_filter(obs: GlmObservations, params: GlmParams, until: float | None = No
         if trace is not None:
             trace[-1][3:5] = ss._collapse(comps)
         if contrib is not None:
-            contrib.append((i, expected, float(g_nat @ (ss._collapse(comps)[0] - m_before))))
+            contrib.append((i, expected, float(g_nat @ (ss._collapse(comps)[0] - m_before)),
+                            min(1.0, 2 * min(tail_up, tail_lo)) if want_p else None))
         if n_seen >= 2 and lv in seen:
             loglik += ll_i
         seen.add(lv)
@@ -640,15 +687,16 @@ def interpolation_summary(results: dict[str, list[dict]]) -> dict:
 
 def monthly_contributions(obs: GlmObservations, params: GlmParams, start: date, end: date) -> list[dict]:
     """start<日付<=endの選挙が、党勢の推定値zをそれぞれどれだけ動かしたか。動きは、その選挙での
-    期待される占有率と実際の占有率の差から生じる。"""
+    期待される占有率と実際の占有率の差から生じる。pは、その選挙の直前までのデータによる予測で
+    実際の結果以上に外れる確率(両側)。"""
     contrib: list = []
-    run_filter(obs, params, until=ss._t(end), contrib=contrib)
+    run_filter(obs, params, until=ss._t(end), contrib=contrib, predictive_after=ss._t(start))
     out = []
-    for i, expected, dz in contrib:
+    for i, expected, dz, pv in contrib:
         e = obs.events[i]
         if start < e.vote_date <= end:
             out.append({"vote_date": e.vote_date.isoformat(), "level": e.level, "name": e.name,
-                        "n": float(obs.n[i]), "actual": float(obs.y[i]), "expected": expected, "dz": dz})
+                        "n": float(obs.n[i]), "actual": float(obs.y[i]), "expected": expected, "dz": dz, "p": pv})
     return out
 
 
@@ -718,7 +766,7 @@ def level_movement(obs: GlmObservations, params: GlmParams, ends: list[date]) ->
     contrib: list = []
     run_filter(obs, params, contrib=contrib)
     out: list[dict[str, float]] = [{} for _ in ends]
-    for i, _, dz in contrib:
+    for i, _, dz, _ in contrib:
         j = bisect.bisect_left(ends, obs.events[i].vote_date)
         if j < len(ends):
             lv = obs.level[i]
@@ -881,7 +929,9 @@ def estimate_all(obs_by_party: dict[str, GlmObservations], ells: dict[str, float
 def month_facts(result: dict, top: int = 10) -> dict:
     """記事の事実データに載せる党勢指数v3の節。各党の最新月の値(その月までの選挙による値)、
     CHANGE_HORIZONSか月前からの変化とその標準偏差(change_posterior)、その月の選挙のうち
-    見込みと結果のずれで推定値を大きく動かしたもの。dzの党ごとの和はフィルタの値の前月からの変化で、
+    見込みから誤差を超えて外れたもの(impacts)。外れの判定は、その月の全党の観測の予測のp値に
+    Holm法をかけて全体で5%に抑える。1か月に200件ほど比べるので、上位を選ぶだけだと偶然の外れが
+    必ず混じる。n_testedは比べた件数。dzの党ごとの和はフィルタの値の前月からの変化で、
     真の党勢の変化の推定ではない(前月の値もその後の選挙で推定し直すと、変化はほとんど残らない)。"""
     parties, impacts = {}, []
     for p, r in result["parties"].items():
@@ -893,8 +943,10 @@ def month_facts(result: dict, top: int = 10) -> dict:
         for c in r.get("contributions", []):
             # 占有率の尺度での動きは、dzが小さければx(1-x)dzで近似できる
             impacts.append({"party": p, **c, "dx": x * (1 - x) * c["dz"]})
-    impacts.sort(key=lambda c: -abs(c["dx"]))
-    return {"tau": result["tau"], "parties": parties, "impacts": impacts[:top]}
+    tested = [c for c in impacts if c.get("p") is not None]
+    sig = [c for c, s in zip(tested, holm_significant([c["p"] for c in tested])) if s]
+    sig.sort(key=lambda c: -abs(c["dx"]))
+    return {"tau": result["tau"], "parties": parties, "impacts": sig[:top], "n_tested": len(tested)}
 
 
 def main(argv: list[str] | None = None) -> None:

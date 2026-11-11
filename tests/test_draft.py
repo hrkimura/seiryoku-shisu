@@ -317,7 +317,7 @@ def test_trend_section_lists_parties_by_value_with_changes_and_their_error():
                      "B": {"x": 0.5, "x_lo": 0.4, "x_hi": 0.6, "changes": [ch(1, -0.001, 0.02, False),
                                                                           ch(24, -0.08, 0.02, True)]}},
          "impacts": [{"party": "A", "vote_date": "2026-09-06", "name": "x市", "level": "市区町村議会",
-                      "n": 5.0, "expected": 0.2, "actual": 0.0, "dx": -0.004}]}
+                      "n": 5.0, "expected": 0.2, "actual": 0.0, "dx": -0.004, "p": 0.0001}], "n_tested": 30}
     body = "\n".join(draft._format_trend(t))
     assert body.index("  - B:") < body.index("  - A:")
     assert "1か月 -0.1(±4.0)" in body
@@ -327,6 +327,9 @@ def test_trend_section_lists_parties_by_value_with_changes_and_their_error():
     assert "1か月 0.0(±2.0)" in "\n".join(draft._format_trend(t))
     assert "見込み 20.0% / 実際 0.0%" in body
     assert "党勢が動いたことは意味しない" in body
+    assert "30件の選挙×党" in body and "p=0.0001" in body
+    t["impacts"] = []
+    assert "誤差を超えて外れたものはなかった" in "\n".join(draft._format_trend(t))
     assert draft._format_trend({"error": "x"})[0].startswith("警告")
 
 

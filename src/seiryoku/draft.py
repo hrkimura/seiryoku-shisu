@@ -295,13 +295,19 @@ def _format_trend(t: dict) -> list[str]:
                      f"変化 {'、'.join(chs) if chs else '—'}")
     for h, d in (t.get("support_diff") or {}).items():
         lines.extend(_format_support_diff(d, h))
+    n_tested = t.get("n_tested", 0)
     if t["impacts"]:
-        lines.append("その月の選挙のうち、見込みと結果のずれで推定値を大きく動かしたもの(選挙前の見込みと"
-                     "実際の議席の割合、推定値の動きのポイント換算、動きの大きい順)。推定値の動きは1か月の"
-                     "選挙だけで見た値で、党勢が動いたことは意味しない:")
+        lines.append(f"その月の選挙のうち、見込みから誤差を超えて外れたもの({n_tested}件の選挙×党を比べ、Holm法で"
+                     "全体の誤りを5%に抑えた判定。選挙前の見込みと実際の議席の割合、予測のp値、推定値の動きの"
+                     "ポイント換算、動きの大きい順)。推定値の動きは1か月の選挙だけで見た値で、党勢が動いたことは"
+                     "意味しない:")
         for c in t["impacts"]:
             lines.append(f"  - {c['party']} {c['vote_date']} {c['name']}({c['level']}、{c['n']:.0f}議席): "
-                         f"見込み {c['expected'] * 100:.1f}% / 実際 {c['actual'] * 100:.1f}%、推定値 {c['dx'] * 100:+.2f}")
+                         f"見込み {c['expected'] * 100:.1f}% / 実際 {c['actual'] * 100:.1f}%、p={c['p']:.2g}、"
+                         f"推定値 {c['dx'] * 100:+.2f}")
+    else:
+        lines.append(f"その月の選挙で、見込みから誤差を超えて外れたものはなかった({n_tested}件の選挙×党を比べ、"
+                     "Holm法で全体の誤りを5%に抑えた判定)。記事の「見込みと結果がずれた選挙」の節は載せない")
     return lines
 
 
