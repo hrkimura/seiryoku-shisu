@@ -45,3 +45,33 @@ def test_convert_attaches_caption_to_table_image(tmp_path):
 def test_char_count_ignores_images_captions_and_link_urls():
     text = "# 題\n\n本文[リンク](https://example.com/abc)。\n[ここに画像: a.png]\n[キャプション: 図1: 説明]\n"
     assert note_export.char_count(text) == len("# 題") + len("本文リンク。")
+
+
+def test_is_significant_detects_dagger_at_end():
+    assert note_export.is_significant("+24.7(±17.5)†")
+    assert note_export.is_significant(" −21.5(±10.7)† ")
+    assert not note_export.is_significant("+2.6(±3.7)")
+    assert not note_export.is_significant("自由民主党")
+
+
+def test_render_table_image_colors_significant_cells(tmp_path, monkeypatch):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_rgba
+
+    captured = {}
+    orig_close = plt.close
+
+    def keep(fig):
+        captured["fig"] = fig
+
+    monkeypatch.setattr(plt, "close", keep)
+    note_export.render_table_image(["政党", "24か月の変化"], [["自民", "+24.7(±17.5)†"], ["国民", "+2.6(±3.7)"]],
+                          tmp_path / "t.png")
+    table = captured["fig"].axes[0].tables[0]
+    cells = table.get_celld()
+    assert cells[(1, 1)].get_facecolor() == to_rgba(note_export.SIGNIFICANT_COLOR)
+    assert cells[(2, 1)].get_facecolor() == to_rgba("white")
+    assert cells[(1, 0)].get_facecolor() == to_rgba("white")
+    orig_close(captured["fig"])

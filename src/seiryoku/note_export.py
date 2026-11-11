@@ -2,7 +2,7 @@
 
 noteの編集画面は数式記法・表組み・斜体を扱えないため、次のように置き換える。
 - $${...}$$の数式はプレーンテキスト(C_p(T)、ΔS_p(t)など)にする
-- 表は画像にして、本文には「[ここに画像: ファイル名]」と書く
+- 表は画像にして、本文には「[ここに画像: ファイル名]」と書く。誤差を超える変化の印(†)が付いたセルは色を付ける
 - 画像の埋め込みも同じ「[ここに画像: ファイル名]」にする(noteでは手で挿入する)
 - 図・表の直後の斜体1行(*図1: ...*)はキャプションとみなし、「[キャプション: ...]」として
   画像の直後に出す(noteでは画像のキャプション欄に貼る。図・表には毎回キャプションを付ける)
@@ -40,6 +40,15 @@ def _parse_table(lines: list[str]) -> tuple[list[str], list[list[str]]]:
     return header, body
 
 
+SIGNIFICANT_MARK = "†"
+SIGNIFICANT_COLOR = "#ffe08a"
+
+
+def is_significant(cell: str) -> bool:
+    """下書きの表で、誤差を超える変化として印(†)を付けたセルか。"""
+    return cell.strip().endswith(SIGNIFICANT_MARK)
+
+
 def render_table_image(header: list[str], rows: list[list[str]], out_path: Path) -> Path:
     import matplotlib
     matplotlib.use("Agg")
@@ -62,6 +71,9 @@ def render_table_image(header: list[str], rows: list[list[str]], out_path: Path)
         if r == 0:
             cell.set_text_props(weight="bold")
             cell.set_facecolor("#eeeeee")
+        elif is_significant(cell.get_text().get_text()):
+            cell.set_text_props(weight="bold")
+            cell.set_facecolor(SIGNIFICANT_COLOR)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, facecolor="white", bbox_inches="tight")
