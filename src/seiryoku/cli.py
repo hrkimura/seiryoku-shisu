@@ -386,7 +386,7 @@ def main(argv: list[str] | None = None) -> None:
         status = monthly_article.prepare(
             facts["year"], facts["month"], Path(mi["image_dir"]), facts_path.read_text(encoding="utf-8"),
             result["support_analysis"]["unknown_labels"], trend.get("refit_reason"), trend.get("validated", False),
-            provisional_start_changed, trend.get("national_by"),
+            provisional_start_changed, trend.get("national_by"), trend,
         )
         print(f"記事用の図のコピーと警告のまとめ: {status}")
 

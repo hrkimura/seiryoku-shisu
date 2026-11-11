@@ -944,9 +944,14 @@ def month_facts(result: dict, top: int = 10) -> dict:
             # 占有率の尺度での動きは、dzが小さければx(1-x)dzで近似できる
             impacts.append({"party": p, **c, "dx": x * (1 - x) * c["dz"]})
     tested = [c for c in impacts if c.get("p") is not None]
-    sig = [c for c, s in zip(tested, holm_significant([c["p"] for c in tested])) if s]
-    sig.sort(key=lambda c: -abs(c["dx"]))
-    return {"tau": result["tau"], "parties": parties, "impacts": sig[:top], "n_tested": len(tested)}
+    flags = {id(c): s for c, s in zip(tested, holm_significant([c["p"] for c in tested]))}
+    sig = sorted((c for c in tested if flags[id(c)]), key=lambda c: -abs(c["dx"]))
+    # 国政選挙は有意かどうかに関わらず記事で取り上げるので、全件を判定つきで渡す
+    national = [{**c, "significant": flags.get(id(c), False)} for c in impacts
+                if c["level"] in ss.NATIONAL_LEVELS or c["level"] in NATIONAL_BY_LEVELS]
+    national.sort(key=lambda c: (c["vote_date"], c["name"], c["party"]))
+    return {"tau": result["tau"], "parties": parties, "impacts": sig[:top], "n_tested": len(tested),
+            "national": national}
 
 
 def main(argv: list[str] | None = None) -> None:

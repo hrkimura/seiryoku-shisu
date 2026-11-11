@@ -328,6 +328,9 @@ def test_trend_section_lists_parties_by_value_with_changes_and_their_error():
     assert "見込み 20.0% / 実際 0.0%" in body
     assert "党勢が動いたことは意味しない" in body
     assert "30件の選挙×党" in body and "p=0.0001" in body
+    t["national"] = [{"party": "A", "vote_date": "2026-09-06", "name": "衆院選", "level": "衆院選",
+                      "expected": 0.2, "actual": 0.3, "p": 0.4, "significant": False}]
+    assert "見込み 20.0% / 実際 30.0%、p=0.4、見込みの誤差の範囲" in "\n".join(draft._format_trend(t))
     t["impacts"] = []
     assert "誤差を超えて外れたものはなかった" in "\n".join(draft._format_trend(t))
     assert draft._format_trend({"error": "x"})[0].startswith("警告")

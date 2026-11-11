@@ -1,12 +1,45 @@
+import json
 import subprocess
 
 from seiryoku import monthly_article as ma
 
 
-def test_article_number_counts_months_from_dai0kai():
-    assert ma.article_number(2026, 8) == 0
-    assert ma.article_number(2026, 10) == 2
-    assert ma.article_number(2027, 1) == 5
+def _trend(national=(), impacts=(), one_month_beyond=False):
+    ch = [{"months": 1, "beyond_error": one_month_beyond}, {"months": 12, "beyond_error": True}]
+    return {"parties": {"A": {"changes": ch}}, "national": list(national), "impacts": list(impacts)}
+
+
+def test_article_reasons_need_a_national_election_a_beyond_error_result_or_a_long_gap():
+    prev = {"2026-10": 2}
+    # 12か月の変化が誤差を超えていても、それだけでは記事にしない
+    assert ma.article_reasons(_trend(), 2026, 11, prev) == []
+    assert ma.article_reasons(_trend(national=[{"level": "衆院選"}]), 2026, 11, prev) == ["国政選挙があった"]
+    assert ma.article_reasons(_trend(one_month_beyond=True), 2026, 11, prev) == ["1か月の変化が誤差を超えた党がある"]
+    assert ma.article_reasons(_trend(impacts=[{"level": "市区町村議会"}]), 2026, 11, prev) == [
+        "見込みから誤差を超えて外れた地方選挙がある"]
+    # 国政選挙の外れはimpactsにも入るが、地方選挙の理由にはしない
+    assert ma.article_reasons(_trend(national=[{"level": "衆院補選"}], impacts=[{"level": "衆院補選"}]),
+                              2026, 11, prev) == ["国政選挙があった"]
+    assert ma.article_reasons(_trend(), 2027, 4, prev) == ["前回の記事から6か月たった"]
+    assert ma.article_reasons(_trend(), 2027, 3, prev) == []
+    assert ma.article_reasons({"error": "x"}, 2026, 11, prev) == []
+    assert ma.article_reasons(None, 2026, 11, {}) == ["最初の記事"]
+
+
+def test_decide_numbers_articles_consecutively_and_keeps_the_number_on_rerun(tmp_path, monkeypatch):
+    monkeypatch.setattr(ma, "ROOT", tmp_path)
+    monkeypatch.setattr(ma, "OUTPUT_DIR", tmp_path / "output")
+    (tmp_path / "data").mkdir()
+    ma.articles_path().write_text(json.dumps({"2026-10": 2}))
+    d = ma.decide(_trend(), 2026, 11, ["[参考] 支持率の取得が1回失敗"])
+    assert d == {"article": False, "n": None, "reasons": [], "needs_claude": False}
+    assert ma.decide(_trend(), 2026, 11, ["[要確認] 略称表にない政党名: X"])["needs_claude"]
+    d = ma.decide(_trend(national=[{"level": "衆院選"}]), 2027, 1, [])
+    assert d["article"] and d["n"] == 3
+    assert ma.article_number(2027, 1) == 3
+    # やり直しで理由が変わっても、振った番号は変えない
+    assert ma.decide(_trend(), 2027, 1, [])["n"] == 3
+    assert ma.load_decision(2027, 1)["n"] == 3
 
 
 def test_copy_images_uses_longest_diff_horizon(tmp_path):
@@ -39,25 +72,33 @@ def test_collect_warnings_gathers_facts_and_run_warnings():
 
 def test_write_status_lists_warnings(tmp_path, monkeypatch):
     monkeypatch.setattr(ma, "OUTPUT_DIR", tmp_path)
-    path = ma.write_status(2026, 10, 2, [], [tmp_path / "a.png"])
+    path = ma.write_status(2026, 10, 2, [], [tmp_path / "a.png"], ["国政選挙があった"])
     text = path.read_text()
     assert path.name == "status_2026-10.txt"
-    assert "第2回" in text and "なし" in text and "a.png" in text
+    assert "第2回" in text and "なし" in text and "a.png" in text and "理由: 国政選挙があった" in text
+    assert "今月は記事にしない" in ma.write_status(2026, 11, None, [], []).read_text()
 
 
-def test_latest_facts_and_prompt(tmp_path):
+def test_latest_facts_and_prompt(tmp_path, monkeypatch):
     for ym in ["2026-08", "2026-10", "2026-09"]:
         (tmp_path / f"draft_facts_{ym}.txt").write_text("")
     (tmp_path / "draft_facts_2026-10.txt.bak").write_text("")
     assert ma.latest_facts(tmp_path) == (2026, 10)
     assert ma.latest_facts(tmp_path / "none") is None
-    assert ma.build_prompt(2026, 10, "facts_{{YM}} dai{{N}}kai 第{{N}}回") == "facts_2026-10 dai2kai 第2回"
+    monkeypatch.setattr(ma, "ROOT", tmp_path)
+    monkeypatch.setattr(ma, "OUTPUT_DIR", tmp_path)
+    (tmp_path / "data").mkdir()
+    ma.decide(_trend(national=[{"level": "衆院選"}]), 2026, 10, [])
+    assert ma.build_prompt(2026, 10, "facts_{{YM}} dai{{N}}kai 第{{N}}回 {{REASONS}}") == \
+        "facts_2026-10 dai0kai 第0回 国政選挙があった、最初の記事"
 
 
-def test_prompt_template_has_placeholders():
+def test_prompt_templates_have_no_leftover_placeholders():
     prompt = ma.build_prompt(2026, 10)
     assert "{{" not in prompt
     assert "output/draft_facts_2026-10.txt" in prompt and "notes/dai2kai_draft.md" in prompt
+    maintenance = ma.build_prompt(2026, 10, maintenance=True)
+    assert "{{" not in maintenance and "output/status_2026-10.txt" in maintenance
 
 
 def _setup_main(tmp_path, monkeypatch, result):
@@ -68,7 +109,9 @@ def _setup_main(tmp_path, monkeypatch, result):
     monkeypatch.setattr(ma, "OUTPUT_DIR", out)
     monkeypatch.setattr(ma, "NOTES_DIR", notes)
     monkeypatch.setattr(ma, "ROOT", tmp_path)
-    monkeypatch.setattr(ma, "build_prompt", lambda y, m: "prompt")
+    monkeypatch.setattr(ma, "build_prompt", lambda y, m, maintenance=False: "対処" if maintenance else "prompt")
+    (out / "article_decision_2026-10.json").write_text(json.dumps(
+        {"article": True, "n": 2, "reasons": ["国政選挙があった"], "needs_claude": True}))
     monkeypatch.setattr(ma, "notify", lambda *a: None)
     calls = []
 
@@ -130,3 +173,32 @@ def test_main_success_clears_failure_count(tmp_path, monkeypatch):
     (out / "draft_failures_2026-10").write_text("2\n")
     assert ma.main([]) == 0
     assert not (out / "draft_failures_2026-10").exists()
+
+
+def _no_article(out, needs_claude):
+    (out / "article_decision_2026-10.json").write_text(json.dumps(
+        {"article": False, "n": None, "reasons": [], "needs_claude": needs_claude}))
+
+
+def test_main_without_article_and_warnings_does_not_start_claude(tmp_path, monkeypatch):
+    out, notes, calls = _setup_main(tmp_path, monkeypatch, subprocess.CompletedProcess([], 0, "報告", ""))
+    _no_article(out, False)
+    assert ma.main([]) == 0
+    assert calls == []
+
+
+def test_main_without_article_asks_claude_only_to_handle_warnings(tmp_path, monkeypatch):
+    out, notes, calls = _setup_main(tmp_path, monkeypatch, subprocess.CompletedProcess([], 0, "対処の報告", ""))
+    _no_article(out, True)
+    assert ma.main([]) == 0
+    assert calls == ["対処"]
+    assert (out / "draft_log_2026-10.txt").read_text() == "対処の報告"
+    assert ma.main([]) == 0
+    assert len(calls) == 1
+
+
+def test_main_needs_the_decision_of_the_monthly_run(tmp_path, monkeypatch):
+    out, notes, calls = _setup_main(tmp_path, monkeypatch, subprocess.CompletedProcess([], 0, "", ""))
+    (out / "article_decision_2026-10.json").unlink()
+    assert ma.main([]) == 1
+    assert calls == []

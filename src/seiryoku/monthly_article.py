@@ -1,12 +1,14 @@
-"""月次記事の準備(図のコピー、警告のまとめと通知)と、Claude Codeによる下書きの生成。
+"""月次記事の準備(記事を出すかの判定、図のコピー、警告のまとめと通知)と、Claude Codeによる下書きの生成。
 
-月次実行(cli)の最後に prepare() が図を記事用の名前でコピーし、警告を
-output/status_YYYY-MM.txt に書いてデスクトップに通知する。その後、別のunit
-(seiryoku-shisu-draft.service)が main() で `claude -p` を起動し、
-notes/monthly_draft_prompt.md の指示で下書きを書かせる。
+月次実行(cli)の最後に prepare() がその月に記事を出すかを判定し(article_reasons)、出すなら
+図を記事用の名前でコピーする。警告は output/status_YYYY-MM.txt に書いてデスクトップに通知する。
+その後、別のunit(seiryoku-shisu-draft.service)が main() で `claude -p` を起動し、記事を出す月は
+notes/monthly_draft_prompt.md、出さない月で対処の要る警告があれば notes/monthly_maintenance_prompt.md
+の指示で動かす。地方選挙だけの月は党勢の変化がほぼ必ず誤差の範囲なので、毎月は記事にしない。
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -18,10 +20,11 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "output"
 NOTES_DIR = ROOT / "notes"
 PROMPT_PATH = NOTES_DIR / "monthly_draft_prompt.md"
+MAINTENANCE_PROMPT_PATH = NOTES_DIR / "monthly_maintenance_prompt.md"
 CLAUDE = Path.home() / ".local" / "bin" / "claude"
 
-# 第0回が2026年8月分。以後、月ごとに1回ずつ進む。
-FIRST_ARTICLE = (2026, 8)
+# 何か月記事が出なければ、変化がなくても記事にするか
+MAX_GAP_MONTHS = 6
 
 # 失敗の回数は月ごとにここで数える。systemdのStartLimitBurstで数えると、月次実行の
 # 6時間おきの起動(済んだ月はすぐ終わる)に続く起動まで数えられ、成功していても上限に達する。
@@ -39,8 +42,80 @@ ALLOWED_TOOLS = [
 ]
 
 
-def article_number(year: int, month: int) -> int:
-    return (year - FIRST_ARTICLE[0]) * 12 + month - FIRST_ARTICLE[1]
+def _ym(year: int, month: int) -> str:
+    return f"{year:04d}-{month:02d}"
+
+
+def articles_path() -> Path:
+    return ROOT / "data" / "articles.json"
+
+
+def load_articles() -> dict[str, int]:
+    """記事を出した月("YYYY-MM")と、その回の番号。"""
+    try:
+        return json.loads(articles_path().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+
+
+def article_number(year: int, month: int) -> int | None:
+    return load_articles().get(_ym(year, month))
+
+
+def article_reasons(trend: dict | None, year: int, month: int, articles: dict[str, int]) -> list[str]:
+    """その月に記事を出す理由。空なら記事にしない。12か月の変化は、国政選挙で一度誤差を超えると
+    1年近く超えたままになり毎月の理由になってしまうので、理由に入れない。"""
+    from .by_elections import NATIONAL_BY_LEVELS
+    from .state_space import NATIONAL_LEVELS
+
+    national_levels = set(NATIONAL_LEVELS) | set(NATIONAL_BY_LEVELS)
+    reasons = []
+    if trend and "error" not in trend:
+        if trend.get("national"):
+            reasons.append("国政選挙があった")
+        if any(c["months"] == 1 and c["beyond_error"]
+               for r in trend.get("parties", {}).values() for c in r.get("changes", [])):
+            reasons.append("1か月の変化が誤差を超えた党がある")
+        if any(c["level"] not in national_levels for c in trend.get("impacts", [])):
+            reasons.append("見込みから誤差を超えて外れた地方選挙がある")
+    earlier = [k for k in articles if k < _ym(year, month)]
+    if not earlier:
+        reasons.append("最初の記事")
+    else:
+        y0, m0 = map(int, max(earlier).split("-"))
+        if (year - y0) * 12 + month - m0 >= MAX_GAP_MONTHS:
+            reasons.append(f"前回の記事から{MAX_GAP_MONTHS}か月たった")
+    return reasons
+
+
+def decision_path(year: int, month: int) -> Path:
+    return OUTPUT_DIR / f"article_decision_{_ym(year, month)}.json"
+
+
+def load_decision(year: int, month: int) -> dict | None:
+    try:
+        return json.loads(decision_path(year, month).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+
+
+def decide(trend: dict | None, year: int, month: int, warnings: list[str]) -> dict:
+    """記事を出すかを決めて保存する。出すなら回の番号を振ってdata/articles.jsonに記録する。
+    同じ月の月次実行をやり直しても、一度振った番号は変えない。"""
+    articles = load_articles()
+    key = _ym(year, month)
+    reasons = article_reasons(trend, year, month, articles)
+    n = articles.get(key)
+    if n is None and reasons:
+        n = max(articles.values(), default=-1) + 1
+        articles[key] = n
+        articles_path().parent.mkdir(parents=True, exist_ok=True)
+        articles_path().write_text(json.dumps(articles, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    d = {"article": n is not None, "n": n, "reasons": reasons,
+         "needs_claude": n is not None or any(not w.startswith("[参考]") for w in warnings)}
+    decision_path(year, month).parent.mkdir(parents=True, exist_ok=True)
+    decision_path(year, month).write_text(json.dumps(d, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return d
 
 
 def copy_images(image_dir: Path, n: int, dest: Path = NOTES_DIR / "images") -> list[Path]:
@@ -108,8 +183,12 @@ def status_path(year: int, month: int) -> Path:
     return OUTPUT_DIR / f"status_{year:04d}-{month:02d}.txt"
 
 
-def write_status(year: int, month: int, n: int, warnings: list[str], copied: list[Path]) -> Path:
-    lines = [f"# {year}年{month}月分(第{n}回)の月次実行", ""]
+def write_status(year: int, month: int, n: int | None, warnings: list[str], copied: list[Path],
+                 reasons: list[str] | None = None) -> Path:
+    lines = [f"# {year}年{month}月分" + (f"(第{n}回)" if n is not None else "") + "の月次実行", ""]
+    lines += ["## 記事", (f"第{n}回を出す。理由: " + "、".join(reasons or [])) if n is not None
+              else "今月は記事にしない(国政選挙がなく、誤差を超える変化も外れもなく、前回の記事から"
+                   f"{MAX_GAP_MONTHS}か月たっていない)", ""]
     lines += ["## 警告", *(warnings or ["なし"]), ""]
     lines += ["## 記事用にコピーした図", *(str(p.relative_to(ROOT)) if p.is_relative_to(ROOT) else str(p)
                                          for p in copied)]
@@ -121,15 +200,20 @@ def write_status(year: int, month: int, n: int, warnings: list[str], copied: lis
 
 def prepare(year: int, month: int, image_dir: Path, facts_text: str, unknown_labels: list[str],
             refit_reason: str | None, validated: bool, provisional_start_changed: bool,
-            national_by: dict | None = None) -> Path:
-    n = article_number(year, month)
-    copied = copy_images(image_dir, n)
+            national_by: dict | None = None, trend: dict | None = None) -> Path:
     warnings = collect_warnings(facts_text, unknown_labels, refit_reason, validated,
                                 provisional_start_changed, support_fetch_failures(), national_by)
-    path = write_status(year, month, n, warnings, copied)
-    notify(f"{year}年{month}月分の月次実行が終わりました",
-           f"警告{len(warnings)}件。続けて第{n}回の下書きを生成します" if warnings
-           else f"警告なし。続けて第{n}回の下書きを生成します")
+    d = decide(trend, year, month, warnings)
+    n = d["n"]
+    copied = copy_images(image_dir, n) if n is not None else []
+    path = write_status(year, month, n, warnings, copied, d["reasons"])
+    if n is not None:
+        nxt = f"続けて第{n}回の下書きを生成します(理由: {'、'.join(d['reasons'])})"
+    elif d["needs_claude"]:
+        nxt = "今月は記事にしません。警告への対処だけClaudeに頼みます"
+    else:
+        nxt = "今月は記事にしません。対処の要る警告もありません"
+    notify(f"{year}年{month}月分の月次実行が終わりました", f"警告{len(warnings)}件。{nxt}")
     return path
 
 
@@ -150,9 +234,12 @@ def latest_facts(output_dir: Path | None = None) -> tuple[int, int] | None:
     return max(months) if months else None
 
 
-def build_prompt(year: int, month: int, template: str | None = None) -> str:
-    template = PROMPT_PATH.read_text(encoding="utf-8") if template is None else template
-    return template.replace("{{YM}}", f"{year:04d}-{month:02d}").replace("{{N}}", str(article_number(year, month)))
+def build_prompt(year: int, month: int, template: str | None = None, maintenance: bool = False) -> str:
+    if template is None:
+        template = (MAINTENANCE_PROMPT_PATH if maintenance else PROMPT_PATH).read_text(encoding="utf-8")
+    d = load_decision(year, month) or {}
+    return (template.replace("{{YM}}", _ym(year, month)).replace("{{N}}", str(article_number(year, month)))
+            .replace("{{REASONS}}", "、".join(d.get("reasons", []))))
 
 
 def draft_log_path(year: int, month: int) -> Path:
@@ -190,41 +277,55 @@ def main(argv: list[str] | None = None) -> int:
     if ym is None:
         print("output/draft_facts_*.txt がない")
         return 1
-    prompt = build_prompt(*ym)
+    d = load_decision(*ym)
+    if d is None:
+        print(f"{ym[0]}年{ym[1]}月分の記事の判定がない(月次実行が済んでいない)")
+        return 1
+    article = d["article"]
+    if not article and not d["needs_claude"]:
+        print(f"{ym[0]}年{ym[1]}月分は記事にせず、対処の要る警告もない")
+        return 0
+    prompt = build_prompt(*ym, maintenance=not article)
     if args.print_prompt:
         print(prompt)
         return 0
-    n = article_number(*ym)
+    n = d["n"]
+    label = f"第{n}回の下書き" if article else f"{ym[0]}年{ym[1]}月分の警告への対処"
     log = draft_log_path(*ym)
-    draft = NOTES_DIR / f"dai{n}kai_draft.md"
-    if (log.exists() or draft.exists()) and not args.force:
-        print(f"第{n}回の下書きはすでにある({draft})")
+    # 記事のない月は下書きを作らない。消すべき途中の下書きもない
+    draft = NOTES_DIR / f"dai{n}kai_draft.md" if article else None
+    if (log.exists() or (draft and draft.exists())) and not args.force:
+        print(f"{label}はすでに済んでいる({log})")
         return 0
     failures_file = attempts_path(*ym)
     if args.force:
         failures_file.unlink(missing_ok=True)
     failures = read_failures(failures_file)
     if failures >= MAX_ATTEMPTS:
-        print(f"第{n}回の下書きは{failures}回失敗したので、取り直さない(--force で再開)")
+        print(f"{label}は{failures}回失敗したので、取り直さない(--force で再開)")
         return 0
     proc = run_claude(prompt)
     if proc.returncode != 0:
         print(proc.stdout, proc.stderr, sep="\n")
         # 起動前に下書きがないことを確かめているので、残っているのは途中で止まった下書きだけ。
         # 消しておかないと、取り直しが「すでにある」で止まる。
-        draft.unlink(missing_ok=True)
+        if draft:
+            draft.unlink(missing_ok=True)
         failures += 1
         failures_file.write_text(f"{failures}\n")
         if failures >= MAX_ATTEMPTS:
-            notify(f"第{n}回の下書きの生成に{failures}回失敗",
+            notify(f"{label}に{failures}回失敗",
                    "取り直しをやめました。/monthly-draft か --force で書き直してください")
             return EXIT_GIVE_UP
-        notify(f"第{n}回の下書きの生成に失敗", "seiryoku-shisu-draft.service がしばらくして取り直します")
+        notify(f"{label}に失敗", "seiryoku-shisu-draft.service がしばらくして取り直します")
         return 1
     failures_file.unlink(missing_ok=True)
     log.write_text(proc.stdout, encoding="utf-8")
     print(proc.stdout)
-    notify(f"第{n}回の下書きができました", f"notes/dai{n}kai_draft.md(報告は {log.relative_to(ROOT)})")
+    if article:
+        notify(f"第{n}回の下書きができました", f"notes/dai{n}kai_draft.md(報告は {log.relative_to(ROOT)})")
+    else:
+        notify(f"{ym[0]}年{ym[1]}月分の警告に対処しました", f"報告は {log.relative_to(ROOT)}")
     return 0
 
 

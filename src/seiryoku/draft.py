@@ -309,6 +309,13 @@ def _format_trend(t: dict) -> list[str]:
     for h, d in (t.get("support_diff") or {}).items():
         lines.extend(_format_support_diff(d, h))
     n_tested = t.get("n_tested", 0)
+    if t.get("national"):
+        lines.append("その月の国政選挙(補選を含む)の結果と、選挙前の見込み(衆院の議席率の尺度に直す前の、その選挙での"
+                     "議席の割合)。判定は、その月の全ての選挙×党と合わせてHolm法で全体の誤りを5%に抑えたもの:")
+        for c in t["national"]:
+            lines.append(f"  - {c['party']} {c['vote_date']} {c['name']}({c['level']}): 見込み {c['expected'] * 100:.1f}% / "
+                         f"実際 {c['actual'] * 100:.1f}%、p={c['p']:.2g}、"
+                         f"{'見込みから誤差を超えて外れた' if c['significant'] else '見込みの誤差の範囲'}")
     if t["impacts"]:
         lines.append(f"その月の選挙のうち、見込みから誤差を超えて外れたもの({n_tested}件の選挙×党を比べ、Holm法で"
                      "全体の誤りを5%に抑えた判定。選挙前の見込みと実際の議席の割合、予測のp値、推定値の動きの"

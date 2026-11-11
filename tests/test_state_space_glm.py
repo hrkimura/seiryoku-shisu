@@ -538,3 +538,17 @@ def test_without_local_alpha_the_council_level_state_is_never_updated():
     r = glm.run_filter(obs, p)
     j = 2 + r.state_levels.index("市区町村議会")
     assert not p.local_alpha and r.mean[j] == 0.0 and r.cov[j, j] == pytest.approx(glm.PRIOR_VAR_ALPHA)
+
+
+def test_month_facts_lists_every_national_election_with_its_judgement():
+    def row(tau, x):
+        return {"tau": tau, "x": x, "x_lo": x / 2, "x_hi": x * 2, "x_f": x, "x_f_lo": x / 2, "x_f_hi": x * 2}
+    c = [{"vote_date": "2026-09-06", "level": "衆院選", "name": "衆院選", "n": 465.0, "actual": 0.3,
+          "expected": 0.2, "dz": 0.5, "p": 1e-6},
+         {"vote_date": "2026-09-06", "level": "市区町村議会", "name": "市", "n": 5.0, "actual": 0.2,
+          "expected": 0.2, "dz": 0.0, "p": 0.9}]
+    result = {"tau": "2026-09-30", "parties": {"A": {"series": [row("2026-09-30", 0.3)], "contributions": c,
+                                                      "changes": []}}}
+    f = glm.month_facts(result)
+    assert [(n["name"], n["significant"]) for n in f["national"]] == [("衆院選", True)]
+    assert [i["name"] for i in f["impacts"]] == ["衆院選"]
