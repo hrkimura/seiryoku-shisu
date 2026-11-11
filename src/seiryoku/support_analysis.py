@@ -228,6 +228,22 @@ def _renormalized(S_p: dict[str, float]) -> dict[str, float]:
     return {p: v / total * 100 for p, v in S.items()} if total else {}
 
 
+def trend_support_gap(result: dict, support: dict) -> list[dict]:
+    """図2(政党支持率と党勢指数v3の散布図)の点ごとに、無党派を除いた支持率(%)が党勢の
+    ±2標準偏差の幅の外にあるか。幅の外にある党だけが、点線から誤差を超えて外れていると言える。
+    支持率の側の誤差(各社の調査の平均)は党勢の幅よりずっと小さいので入れていない。"""
+    S = _renormalized(support["S_p"])
+    out = []
+    for party, r in result["parties"].items():
+        if party not in S:
+            continue
+        s = r["series"][-1]
+        x, lo, hi = (s.get(k, s[k.replace("_f", "")]) * 100 for k in ("x_f", "x_f_lo", "x_f_hi"))
+        out.append({"party": party, "support": S[party], "x": x, "x_lo": lo, "x_hi": hi,
+                    "outside": not lo <= S[party] <= hi})
+    return out
+
+
 def _pearson_with_ci(x: np.ndarray, y: np.ndarray) -> dict | None:
     """Pearsonの相関と、Fisherのz変換による95%信頼区間(n>3で定義される)。"""
     from scipy.stats import norm, pearsonr

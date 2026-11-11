@@ -262,6 +262,12 @@ def _format_support_diff(d: dict | None, horizon: int) -> list[str]:
         c = d["pearson"]
         ci = f"、95%区間 {c['ci95'][0]:+.2f}〜{c['ci95'][1]:+.2f}" if c["ci95"] else ""
         lines.append(f"  相関 r={c['r']:+.2f}(n={c['n']}{ci}、同じ月の党どうしは独立でないので区間は目安)")
+        if c["ci95"] and (c["ci95"][0] > 0 or c["ci95"][1] < 0):
+            lines.append("  判定: 相関は有意(95%区間が0を含まない)。記事に差の散布図の節を載せる")
+        else:
+            lines.append("  判定: 相関は有意でない(95%区間が0を含む)。記事に差の散布図の節は載せない")
+    else:
+        lines.append("  判定: 相関を計算できない。記事に差の散布図の節は載せない")
     if d["spearman"]:
         lines.append(f"  順位相関 ρ={d['spearman']['rho']:+.2f}")
     lines.append("  支持率を月末にそろえた方法:")
@@ -293,6 +299,13 @@ def _format_trend(t: dict) -> list[str]:
                f"{'、誤差を超える' if c['beyond_error'] else ''})" for c in r.get("changes", [])]
         lines.append(f"  - {party}: {r['x'] * 100:.1f}%({r['x_lo'] * 100:.1f}〜{r['x_hi'] * 100:.1f}%)、"
                      f"変化 {'、'.join(chs) if chs else '—'}")
+    gap = t.get("support_gap")
+    if gap:
+        lines.append("政党支持率(無党派を除いて再計算、%)と党勢指数v3(±2標準偏差の幅)。支持率が幅の外にある党だけが、"
+                     "図2の点線から誤差を超えて外れている:")
+        for g in sorted(gap, key=lambda g: -g["x"]):
+            lines.append(f"  - {g['party']}: 支持率 {g['support']:.1f}、党勢 {g['x']:.1f}({g['x_lo']:.1f}〜{g['x_hi']:.1f})"
+                         f"{'、誤差を超えて外れている' if g['outside'] else '、幅の中'}")
     for h, d in (t.get("support_diff") or {}).items():
         lines.extend(_format_support_diff(d, h))
     n_tested = t.get("n_tested", 0)

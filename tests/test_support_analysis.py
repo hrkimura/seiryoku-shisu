@@ -152,3 +152,13 @@ def test_trend_support_diffs_keeps_only_the_largest_parties(monkeypatch):
     d = sa.trend_support_diffs(_v2_result(), _SUPPORT)
     # 10月末のv2の値は自民0.55、立憲0.10、共産0.04、公明0.04、参政0.03で、同じ値は元の並び順を保つ
     assert sorted(p["party"] for p in d["points"]) == ["日本共産党", "立憲民主党", "自由民主党"]
+
+
+def test_trend_support_gap_marks_only_parties_whose_support_is_outside_the_band():
+    def last(x, lo, hi):
+        return {"series": [{"tau": "2026-10-31", "x": x, "x_lo": lo, "x_hi": hi, "x_f": x, "x_f_lo": lo, "x_f_hi": hi}]}
+    result = {"parties": {"A": last(0.50, 0.40, 0.60), "B": last(0.05, 0.03, 0.10), "C": last(0.02, 0.01, 0.03)}}
+    # 無党派を除くとA 50%、B 20%、C 30%
+    gap = {g["party"]: g for g in sa.trend_support_gap(result, {"S_p": {"無党派": 50.0, "A": 25.0, "B": 10.0, "C": 15.0}})}
+    assert gap["A"]["support"] == 50.0 and not gap["A"]["outside"]
+    assert gap["B"]["outside"] and gap["C"]["outside"]

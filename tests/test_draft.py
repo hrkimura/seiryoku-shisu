@@ -344,3 +344,17 @@ def test_format_support_diff_lists_points_and_alignment():
     assert "最も近い更新(2026-10-06、月末から最も近い更新まで6日)" in text
     assert "3か月差" in draft._format_support_diff(None, 3)[0]
     assert "1か月差(重ならない1期間・1点" in text
+    assert "相関を計算できない。記事に差の散布図の節は載せない" in text
+    d["pearson"] = {"r": 0.38, "n": 8, "ci95": [-0.44, 0.86]}
+    assert "相関は有意でない(95%区間が0を含む)" in "\n".join(draft._format_support_diff(d, 1))
+    d["pearson"] = {"r": 0.9, "n": 20, "ci95": [0.75, 0.96]}
+    assert "相関は有意(95%区間が0を含まない)" in "\n".join(draft._format_support_diff(d, 1))
+
+
+def test_trend_section_lists_support_gap_with_judgement():
+    t = {"tau": "2026-10-31", "refit_reason": None, "parties": {}, "impacts": [], "n_tested": 0,
+         "support_gap": [{"party": "日本共産党", "support": 4.0, "x": 0.7, "x_lo": 0.3, "x_hi": 2.1, "outside": True},
+                         {"party": "立憲民主党", "support": 5.6, "x": 9.5, "x_lo": 4.9, "x_hi": 17.7, "outside": False}]}
+    body = "\n".join(draft._format_trend(t))
+    assert "日本共産党: 支持率 4.0、党勢 0.7(0.3〜2.1)、誤差を超えて外れている" in body
+    assert "立憲民主党: 支持率 5.6、党勢 9.5(4.9〜17.7)、幅の中" in body

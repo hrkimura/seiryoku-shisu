@@ -171,8 +171,9 @@ def _update_trend_v2(image_dir: Path) -> dict:
         charts.generate_trend_chart(result, out_path=image_dir / "trend_v2.png")
         charts.generate_trend_by_party_chart(result, validation, out_path=image_dir / "trend_v2_by_party.png")
         support = support_history.load_history()
-        diffs = None
+        diffs = gap = None
         if support:
+            gap = support_analysis.trend_support_gap(result, support[-1])
             charts.generate_trend_support_scatter(result, support[-1], out_path=image_dir / "trend_v2_vs_support.png")
             diffs = {h: support_analysis.trend_support_diffs(result, support, h) for h in support_analysis.DIFF_HORIZONS}
             for h, d in diffs.items():
@@ -183,7 +184,7 @@ def _update_trend_v2(image_dir: Path) -> dict:
     return {**glm.month_facts(result), "refit_reason": res["refit_reason"],
             "validated": res["validation_path"] is not None,
             "validation_tau": validation["tau"] if validation else None, "support_diff": diffs,
-            "by_election_error": by_election_error, "national_by": national_by}
+            "support_gap": gap, "by_election_error": by_election_error, "national_by": national_by}
 
 
 def run() -> dict:
