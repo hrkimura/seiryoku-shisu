@@ -1283,7 +1283,8 @@ def _place_point_labels(ax, items: list[tuple[str, float, float, str]], obstacle
 
 def generate_trend_support_scatter(result: dict, support: dict, out_path: Path = TREND_SUPPORT_OUT_PATH) -> Path:
     """政党支持率(無党派を除いて再計算)と、党勢指数v3の最新月の値(●、縦棒は±2標準偏差)・
-    直近の衆院選の議席率(○)の散布図。○から●への矢印は、衆院選の後の党勢の動き。
+    直近の衆院選の議席率(○)の散布図。○から●へ矢印は引かない。矢印は衆院選の後に党勢が動いたと
+    読ませるが、○は1回の選挙の観測で、その後の変化もふつうは誤差の範囲に収まる。
     supportはsupport_historyの1件({"updated", "S_p"})。点線は両者が等しいところ。"""
     import matplotlib.ticker as mt
 
@@ -1301,7 +1302,6 @@ def generate_trend_support_scatter(result: dict, support: dict, out_path: Path =
         x = S[party] / total * 100
         y, lo, hi = (s.get(k, s[k.replace("_f", "")]) * 100 for k in ("x_f", "x_f_lo", "x_f_hi"))
         c = colors[party]
-        # 衆院選からの矢印を誤差棒の上で見せるため、誤差棒は薄く描く
         ax.errorbar(x, y, yerr=[[y - lo], [hi - y]], fmt="none", ecolor=c, elinewidth=1.0, capsize=3,
                     alpha=0.6, zorder=2)
         ax.plot(x, y, "o", ms=6.5, color=c, zorder=5)
@@ -1313,8 +1313,6 @@ def generate_trend_support_scatter(result: dict, support: dict, out_path: Path =
             shu_date = last["vote_date"]
             ys = max(last["y"] * 100, 0.11)
             ax.plot(x, ys, "o", ms=6.5, mfc="white", mec=c, mew=1.5, zorder=4)
-            ax.annotate("", (x, y), xytext=(x, ys), zorder=3,
-                        arrowprops=dict(arrowstyle="-|>", color=c, lw=1.8, mutation_scale=12, shrinkA=4, shrinkB=4))
             segs.append((x, min(ys, y), max(ys, y)))
             pts.append((x, ys))
         if party in _SUPPORT_LABEL_FIXED:
