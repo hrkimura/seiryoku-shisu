@@ -249,65 +249,38 @@ def _format_support(s: dict) -> list[str]:
     return lines
 
 
-def _format_support_diff(d: dict | None, horizon: int) -> list[str]:
-    """党勢指数v3と政党支持率のhorizonか月の差(support_analysis.trend_support_diffs)を整形する。"""
-    if not d or not d["points"]:
-        return [f"党勢指数v3と政党支持率の{horizon}か月差の散布図: {horizon}か月離れた月末の支持率がまだそろわないため、今回はなし。"]
-    _METHOD = {"exact": "更新日が月末", "interpolated": "前後の更新から補間", "nearest": "最も近い更新"}
-    lines = [f"党勢指数v3と政党支持率(無党派を除いて再計算)の{horizon}か月差(重ならない{len(d['periods'])}期間・"
-             f"{d['n']}点、どちらもポイント):"]
-    for p in d["points"]:
-        lines.append(f"  - {p['party']} {p['from']}→{p['to']}: v3 {p['dx']:+.2f}、支持率 {p['ds']:+.2f}")
-    if d["pearson"]:
-        c = d["pearson"]
-        ci = f"、95%区間 {c['ci95'][0]:+.2f}〜{c['ci95'][1]:+.2f}" if c["ci95"] else ""
-        lines.append(f"  相関 r={c['r']:+.2f}(n={c['n']}{ci}、同じ月の党どうしは独立でないので区間は目安)")
-        if c["ci95"] and (c["ci95"][0] > 0 or c["ci95"][1] < 0):
-            lines.append("  判定: 相関は有意(95%区間が0を含まない)。記事に差の散布図の節を載せる")
-        else:
-            lines.append("  判定: 相関は有意でない(95%区間が0を含む)。記事に差の散布図の節は載せない")
-    else:
-        lines.append("  判定: 相関を計算できない。記事に差の散布図の節は載せない")
-    if d["spearman"]:
-        lines.append(f"  順位相関 ρ={d['spearman']['rho']:+.2f}")
-    lines.append("  支持率を月末にそろえた方法:")
-    for tau, a in d["alignment"].items():
-        lines.append(f"    - {tau}: {_METHOD[a['method']]}({'・'.join(a['dates'])}、月末から最も近い更新まで{a['offset_days']}日)")
-    return lines
-
-
 def _signed(v: float) -> str:
     """小数1桁で符号付きにする。丸めて0になるものは「-0.0」とせず符号を付けない。"""
     return "0.0" if round(v, 1) == 0 else f"{v:+.1f}"
 
 
 def _format_trend(t: dict) -> list[str]:
-    """党勢指数v3(state_space_glm.month_facts)を整形する。"""
+    """党勢指数v4(state_space_glm.month_facts)を整形する。"""
     if t.get("error"):
-        return [f"警告: 党勢指数v3を計算できなかった({t['error']})。"]
+        return [f"警告: 党勢指数v4を計算できなかった({t['error']})。"]
     lines = []
     if t.get("by_election_error"):
         lines.append(f"警告: 議会補選の取り込みに失敗し、前回までの補選で計算した({t['by_election_error']})。")
     if t.get("refit_reason"):
-        lines.append(f"党勢指数v3のパラメータを今回推定し直した({t['refit_reason']})。")
-    lines.append(f"党勢指数v3({t['tau']}時点、衆院の議席率の尺度、その月までの選挙による値、値の大きい順。"
-                 "括弧内は±2標準偏差の幅。変化は、hか月前の値も今月までの選挙で推定し直したうえでの"
-                 "hか月前からのポイント差で、±は2標準偏差。図1の線(その月までの選挙による値)の差とは一致しない。"
-                 "「誤差を超える」と付いたものだけが、党勢が動いたと言える変化):")
+        lines.append(f"党勢指数v4の選挙の部分のパラメータを今回推定し直した({t['refit_reason']})。")
+    polls = t.get("polls") or {}
+    if polls:
+        lines.append(f"党勢指数v4は、選挙の結果に加えて各社の世論調査の政党支持率{polls['n']}件(最新 {polls['last']})を"
+                     "観測に使う。")
+    from .state_space_glm import TABLE_HORIZONS
+
+    lines.append(f"党勢指数v4({t['tau']}時点、衆院の議席率の尺度、その月までの選挙と世論調査による値、値の大きい順。"
+                 "括弧内は±2標準偏差の幅。変化は、hか月前の値も今月までのデータで推定し直したうえでの"
+                 "hか月前からのポイント差で、±は2標準偏差。図1の線(その月までのデータによる値)の差とは一致しない。"
+                 "「誤差を超える」は、期間ごとに全党の変化をまとめてHolm法にかけ、全体の誤りを5%に抑えた判定"
+                 "(±2標準偏差を少し超えただけでは付かないことがある)。これが付いたものだけが、党勢が動いたと"
+                 "言える変化。1か月の変化はほぼ誤差だけなので載せない):")
     for party, r in sorted(t["parties"].items(), key=lambda kv: -kv[1]["x"]):
         chs = [f"{c['months']}か月 {_signed(c['dx'] * 100)}(±{2 * c['dx_sd'] * 100:.1f}"
-               f"{'、誤差を超える' if c['beyond_error'] else ''})" for c in r.get("changes", [])]
+               f"{'、誤差を超える' if c['beyond_error'] else ''})" for c in r.get("changes", [])
+               if c["months"] in TABLE_HORIZONS]
         lines.append(f"  - {party}: {r['x'] * 100:.1f}%({r['x_lo'] * 100:.1f}〜{r['x_hi'] * 100:.1f}%)、"
                      f"変化 {'、'.join(chs) if chs else '—'}")
-    gap = t.get("support_gap")
-    if gap:
-        lines.append("政党支持率(無党派を除いて再計算、%)と党勢指数v3(±2標準偏差の幅)。支持率が幅の外にある党だけが、"
-                     "図2の点線から誤差を超えて外れている:")
-        for g in sorted(gap, key=lambda g: -g["x"]):
-            lines.append(f"  - {g['party']}: 支持率 {g['support']:.1f}、党勢 {g['x']:.1f}({g['x_lo']:.1f}〜{g['x_hi']:.1f})"
-                         f"{'、誤差を超えて外れている' if g['outside'] else '、幅の中'}")
-    for h, d in (t.get("support_diff") or {}).items():
-        lines.extend(_format_support_diff(d, h))
     n_tested = t.get("n_tested", 0)
     if t.get("national"):
         lines.append("その月の国政選挙(補選を含む)の結果と、選挙前の見込み(衆院の議席率の尺度に直す前の、その選挙での"

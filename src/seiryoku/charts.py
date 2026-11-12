@@ -958,8 +958,8 @@ def _spread_labels(ys: list[float], gap: float) -> list[float]:
 
 
 def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
-    """党勢指数v3の図。1段目は全政党の党勢の推移、2段目は党勢の推定値の動き(|Δz|の合計)の
-    選挙の種類ごとの内訳、最下段は首相の在任期間。resultはstate_space_glmの出力。
+    """党勢指数の図。1段目は全政党の党勢の推移、2段目は党勢の推定値の動き(|Δz|の合計)の
+    観測の種類(選挙の種類と世論調査)ごとの内訳、最下段は首相の在任期間。resultはstate_space_glmの出力。
     1段目はその月までのデータだけによる値(x_f)で描く。平滑化の値は大きな国政選挙の跳びを
     前の月に割り振るので、選挙の前から党勢が動いていたように見えてしまう。"""
     plt = _setup_fonts()
@@ -1029,8 +1029,11 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
     ax1.spines[["top", "right"]].set_visible(False)
 
     totals = np.zeros(n_months)
-    level_data = {lv: [0.0] * n_months for lv in LEVEL_ORDER}
     from .by_elections import PARENT_LEVEL
+    from .state_space_glm import POLL
+
+    order = LEVEL_ORDER + [POLL]
+    level_data = {lv: [0.0] * n_months for lv in order}
 
     for party in parties:
         for r in result["parties"][party].get("movement", []):
@@ -1038,10 +1041,10 @@ def generate_trend_chart(result: dict, out_path: Path = TREND_OUT_PATH) -> Path:
                 lv = PARENT_LEVEL.get(lv, lv)
                 if lv in level_data:
                     level_data[lv][pos[r["tau"]]] += v
-    for lv in LEVEL_ORDER:
+    for lv in order:
         totals += np.array(level_data[lv])
-    levels = [lv for lv in LEVEL_ORDER if any(level_data[lv])]
-    level_colors = [TREND_LEVEL_COLORS.get(lv, c) for lv, c in zip(LEVEL_ORDER, LEVEL_COLORS) if lv in levels]
+    levels = [lv for lv in order if any(level_data[lv])]
+    level_colors = [TREND_LEVEL_COLORS.get(lv, c) for lv, c in zip(order, LEVEL_COLORS + ["#95a5a6"]) if lv in levels]
     level_data = {lv: [v / t * 100 if t > 0 else 0.0 for v, t in zip(level_data[lv], totals)] for lv in levels}
     # 選挙のない月は空白のまま見せるため、隣の月と斜めにつながない段で描く
     ax2.stackplot(range(n_months), [level_data[lv] for lv in levels], colors=level_colors, alpha=0.85, zorder=2,

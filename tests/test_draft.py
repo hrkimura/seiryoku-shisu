@@ -313,18 +313,20 @@ def test_trend_section_lists_parties_by_value_with_changes_and_their_error():
     def ch(months, dx, sd, beyond):
         return {"months": months, "from": "", "dz": 0.0, "dz_sd": 0.0, "dx": dx, "dx_sd": sd, "beyond_error": beyond}
     t = {"tau": "2026-09-30", "refit_reason": None,
-         "parties": {"A": {"x": 0.1, "x_lo": 0.05, "x_hi": 0.2, "changes": [ch(1, 0.01, 0.01, False)]},
-                     "B": {"x": 0.5, "x_lo": 0.4, "x_hi": 0.6, "changes": [ch(1, -0.001, 0.02, False),
-                                                                          ch(24, -0.08, 0.02, True)]}},
+         "parties": {"A": {"x": 0.1, "x_lo": 0.05, "x_hi": 0.2, "changes": [ch(3, 0.01, 0.01, False)]},
+                     "B": {"x": 0.5, "x_lo": 0.4, "x_hi": 0.6, "changes": [ch(3, -0.001, 0.02, False),
+                                                                          ch(24, -0.08, 0.02, True),
+                                                                          ch(1, 0.5, 0.01, True)]}},
          "impacts": [{"party": "A", "vote_date": "2026-09-06", "name": "x市", "level": "市区町村議会",
                       "n": 5.0, "expected": 0.2, "actual": 0.0, "dx": -0.004, "p": 0.0001}], "n_tested": 30}
     body = "\n".join(draft._format_trend(t))
     assert body.index("  - B:") < body.index("  - A:")
-    assert "1か月 -0.1(±4.0)" in body
+    assert "3か月 -0.1(±4.0)" in body
     assert "24か月 -8.0(±4.0、誤差を超える)" in body
-    assert "1か月 +1.0(±2.0)" in body
-    t["parties"]["A"]["changes"] = [ch(1, -0.0004, 0.01, False)]
-    assert "1か月 0.0(±2.0)" in "\n".join(draft._format_trend(t))
+    assert "3か月 +1.0(±2.0)" in body
+    assert "1か月 +50" not in body  # 1か月は記事を出す判定にだけ使い、表には載せない
+    t["parties"]["A"]["changes"] = [ch(3, -0.0004, 0.01, False)]
+    assert "3か月 0.0(±2.0)" in "\n".join(draft._format_trend(t))
     assert "見込み 20.0% / 実際 0.0%" in body
     assert "党勢が動いたことは意味しない" in body
     assert "30件の選挙×党" in body and "p=0.0001" in body
@@ -336,28 +338,12 @@ def test_trend_section_lists_parties_by_value_with_changes_and_their_error():
     assert draft._format_trend({"error": "x"})[0].startswith("警告")
 
 
-def test_format_support_diff_lists_points_and_alignment():
-    from seiryoku import draft
-
-    d = {"points": [{"party": "自由民主党", "from": "2026-09-30", "to": "2026-10-31", "dx": 3.0, "ds": 1.5}],
-         "n": 1, "periods": [("2026-09-30", "2026-10-31")], "pearson": None, "spearman": None,
-         "alignment": {"2026-09-30": {"method": "nearest", "dates": ["2026-10-06"], "offset_days": 6}}}
-    text = "\n".join(draft._format_support_diff(d, 1))
-    assert "自由民主党 2026-09-30→2026-10-31: v3 +3.00、支持率 +1.50" in text
-    assert "最も近い更新(2026-10-06、月末から最も近い更新まで6日)" in text
-    assert "3か月差" in draft._format_support_diff(None, 3)[0]
-    assert "1か月差(重ならない1期間・1点" in text
-    assert "相関を計算できない。記事に差の散布図の節は載せない" in text
-    d["pearson"] = {"r": 0.38, "n": 8, "ci95": [-0.44, 0.86]}
-    assert "相関は有意でない(95%区間が0を含む)" in "\n".join(draft._format_support_diff(d, 1))
-    d["pearson"] = {"r": 0.9, "n": 20, "ci95": [0.75, 0.96]}
-    assert "相関は有意(95%区間が0を含まない)" in "\n".join(draft._format_support_diff(d, 1))
-
-
-def test_trend_section_lists_support_gap_with_judgement():
+def test_trend_section_names_polls_and_drops_support_comparison():
     t = {"tau": "2026-10-31", "refit_reason": None, "parties": {}, "impacts": [], "n_tested": 0,
-         "support_gap": [{"party": "日本共産党", "support": 4.0, "x": 0.7, "x_lo": 0.3, "x_hi": 2.1, "outside": True},
-                         {"party": "立憲民主党", "support": 5.6, "x": 9.5, "x_lo": 4.9, "x_hi": 17.7, "outside": False}]}
+         "polls": {"n": 1058, "last": "2026-10-30"}}
     body = "\n".join(draft._format_trend(t))
-    assert "日本共産党: 支持率 4.0、党勢 0.7(0.3〜2.1)、誤差を超えて外れている" in body
-    assert "立憲民主党: 支持率 5.6、党勢 9.5(4.9〜17.7)、幅の中" in body
+    assert "世論調査の政党支持率1058件(最新 2026-10-30)" in body
+    assert "党勢指数v4(2026-10-31時点" in body
+    assert "支持率が幅の外" not in body
+
+

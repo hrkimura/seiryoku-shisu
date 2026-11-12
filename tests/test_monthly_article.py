@@ -42,16 +42,27 @@ def test_decide_numbers_articles_consecutively_and_keeps_the_number_on_rerun(tmp
     assert ma.load_decision(2027, 1)["n"] == 3
 
 
-def test_copy_images_uses_longest_diff_horizon(tmp_path):
+def test_copy_images_copies_only_the_trend_chart(tmp_path):
     src, dest = tmp_path / "src", tmp_path / "dest"
     src.mkdir()
-    for name in ["trend_v2.png", "trend_v2_vs_support.png", "trend_v2_support_diff_1m.png",
-                 "trend_v2_support_diff_3m.png", "trend_v2_by_party.png"]:
+    for name in ["trend_v2.png", "trend_v2_vs_support.png", "trend_v2_support_diff_3m.png", "trend_v2_by_party.png"]:
         (src / name).write_text(name)
-    copied = ma.copy_images(src, 4, dest)
-    assert sorted(p.name for p in copied) == [
-        "dai4kai_trend_v2.png", "dai4kai_trend_v2_support_diff.png", "dai4kai_trend_v2_vs_support.png"]
-    assert (dest / "dai4kai_trend_v2_support_diff.png").read_text() == "trend_v2_support_diff_3m.png"
+    assert [p.name for p in ma.copy_images(src, 4, dest)] == ["dai4kai_trend_v2.png"]
+
+
+def test_v4_switch_is_a_reason_until_the_first_v4_article():
+    t = {"model": "v4", "parties": {}, "impacts": []}
+    assert "党勢指数をv4(世論調査入り)に切り替えた" in ma.article_reasons(t, 2026, 11, {"2026-10": 2})
+    assert "党勢指数をv4(世論調査入り)に切り替えた" not in ma.article_reasons(t, 2026, 12, {"2026-10": 2, "2026-11": 3})
+    assert "党勢指数をv4(世論調査入り)に切り替えた" not in ma.article_reasons({**t, "model": "v3"}, 2026, 11, {"2026-10": 2})
+
+
+def test_poll_lines_warn_on_fetch_failure_and_missing_rows():
+    lines = ma.poll_lines({"poll_update": {"missing": 3, "unknown_parties": []},
+                           "polls": {"n": 10, "last": "2026-10-30", "refit_reason": None, "parties_without_polls": []}})
+    assert any(l.startswith("[要確認] 保存済みの世論調査のうち3件") for l in lines)
+    assert "世論調査: 10件(最新 2026-10-30)" in lines
+    assert ma.poll_lines({"poll_update": {"error": "X"}})[0].startswith("[要確認] Wikipediaの世論調査の取り直しに失敗")
 
 
 def test_copy_images_skips_missing_figures(tmp_path):

@@ -552,3 +552,14 @@ def test_month_facts_lists_every_national_election_with_its_judgement():
     f = glm.month_facts(result)
     assert [(n["name"], n["significant"]) for n in f["national"]] == [("衆院選", True)]
     assert [i["name"] for i in f["impacts"]] == ["衆院選"]
+
+
+def test_judge_changes_applies_holm_within_each_horizon():
+    def c(h, z):
+        return {"months": h, "dz": z, "dz_sd": 1.0, "beyond_error": abs(z) > 2}
+    parties = {f"p{i}": [c(24, z), c(1, 2.1)] for i, z in enumerate([6.0, 2.6, 2.1, 0.5])}
+    glm.judge_changes(parties)
+    # 24か月: 4党でHolm。6.0と2.6(p=0.0093<0.05/3)は残り、2.1(p=0.036>0.05/2)は外れる
+    assert [parties[f"p{i}"][0]["beyond_error"] for i in range(4)] == [True, True, False, False]
+    # 1か月: 4党とも2.1で、±2は超えるがHolmでは誰も超えない
+    assert not any(parties[f"p{i}"][1]["beyond_error"] for i in range(4))

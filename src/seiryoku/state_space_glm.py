@@ -31,6 +31,7 @@ PRIOR_VAR_Z = 10.0
 PRIOR_VAR_ALPHA = 10.0
 PRIOR_VAR_SLOPE = 0.01
 SANGIIN = "参院選"
+POLL = "世論調査"
 MAYOR_LEVELS = ("市区町村長", "都道府県知事")
 COUNCIL_LEVELS = ("市区町村議会", "都道府県議会")
 # 検証で外すモデルの部品。国政のみは地方選挙も補選も使わない形
@@ -153,10 +154,30 @@ class GlmParams:
     q_nat: float = 0.0
     # Falseなら地方議会と地方議会の補選の水準差alphaを0に固定する(状態の次元は変えない)
     local_alpha: bool = True
+    # 世論調査の支持率(支持政党のある人の中の比率)の観測
+    # logit s=poll_load*(国政の党勢)+alpha_調査+h_社+w+e。h_社は調査会社ごとの癖(事前分布の分散
+    # poll_house_var)、wは減衰率poll_decayで0に戻るブーム(定常分散poll_boom_var)、eの分散は
+    # 標本誤差とpoll_extra_varの和。poll_firmsが空なら世論調査の状態を持たない。
+    poll_firms: list[str] = field(default_factory=list)
+    poll_load: float = 1.0
+    poll_decay: float = 1.0
+    poll_boom_var: float = 0.0
+    poll_house_var: float = 0.0
+    poll_extra_var: float = 0.0
+
+    def n_poll_states(self) -> int:
+        return len(self.poll_firms) + 1 if self.poll_firms else 0
+
+    def poll_index(self) -> tuple[int, dict[str, int]]:
+        """ブームと各社の癖の状態の添字(末尾から数える負の添字)。並びは[..., 癖..., ブーム, z_N]。"""
+        boom = -2 if self.q_nat > 0 else -1
+        return boom, {f: boom - len(self.poll_firms) + i for i, f in enumerate(self.poll_firms)}
 
     def dynamics(self) -> ss.Params:
+        decay = (self.poll_index()[0],) if self.poll_firms else ()
         return ss.Params(q_x=self.q_x, q_b=0.0, sigma2={}, a=0.0, slope=self.slope,
-                         jump_rate=self.jump_rate, jump_var=self.jump_var, q_alpha=self.q_nat)
+                         jump_rate=self.jump_rate, jump_var=self.jump_var, q_alpha=self.q_nat,
+                         decay_idx=decay, decay_rate=self.poll_decay, decay_var=self.poll_boom_var)
 
     def national_vector(self, k_state: int) -> np.ndarray:
         """状態から国政の党勢(logit)を取り出すベクトル。"""
@@ -196,6 +217,14 @@ def national_logit(k: float, n: float, sigma: float | None = None) -> tuple[floa
     if sigma is None:
         return _logit(p), math.sqrt(1 / (k + 0.5) + 1 / (n - k + 0.5))
     return _logit(p), sigma / (p * (1 - p))
+
+
+def poll_logit(k: float, n: float, extra_var: float) -> tuple[float, float]:
+    """世論調査の観測値のlogitと誤差の標準偏差。nは支持政党のある回答者の数、kはそのうちの
+    その党の支持者の数。誤差は二項分布の標本誤差(経験logitの分散)にextra_varを足したもの。
+    支持者0人でもlogitが有限になるよう、national_logitと同じく0.5人を足す。"""
+    p = (k + 0.5) / (n + 1.0)
+    return _logit(p), math.sqrt(1 / (k + 0.5) + 1 / (n - k + 0.5) + extra_var)
 
 
 def _local_loglik(eta: float, k: float, n: float, phi: float) -> tuple[float, float, float]:
@@ -302,7 +331,7 @@ def run_filter(obs: GlmObservations, params: GlmParams, until: float | None = No
         {lv for lv in obs.level if lv != ss.REFERENCE_LEVEL})
     idx = {lv: 2 + i for i, lv in enumerate(levels)}
     dyn = params.dynamics()
-    k_state = 2 + len(levels) + (1 if params.q_nat > 0 else 0)
+    k_state = 2 + len(levels) + params.n_poll_states() + (1 if params.q_nat > 0 else 0)
     nat_idx = [k_state - 1] if params.q_nat > 0 else []
     g_nat = params.national_vector(k_state)
     m = np.zeros(k_state)
@@ -310,6 +339,11 @@ def run_filter(obs: GlmObservations, params: GlmParams, until: float | None = No
     C[1, 1] = 0.0 if params.slope == "none" else PRIOR_VAR_SLOPE
     if nat_idx:
         C[-1, -1] = 0.0
+    boom_idx, house_idx = params.poll_index()
+    if params.poll_firms:
+        C[boom_idx, boom_idx] = params.poll_boom_var
+        for hi in house_idx.values():
+            C[hi, hi] = params.poll_house_var
     if SANGIIN in idx:
         m[idx[SANGIIN]] = params.san_offset
         C[idx[SANGIIN], idx[SANGIIN]] = params.san_prior_var
@@ -345,12 +379,19 @@ def run_filter(obs: GlmObservations, params: GlmParams, until: float | None = No
                 trace.append([t, mp, Cp, mp, Cp])
         lv = obs.level[i]
         h = np.zeros(k_state)
-        # 得票率の観測は国政選挙と同じく正規分布で、地方の負荷も自治体の地盤も持たない
-        national = lv in ss.NATIONAL_LEVELS or lv == NATIONAL_VOTE_BY
+        # 得票率と世論調査の観測は国政選挙と同じく正規分布で、地方の負荷も自治体の地盤も持たない
+        national = lv in ss.NATIONAL_LEVELS or lv == NATIONAL_VOTE_BY or lv == POLL
         j = idx.get(lv)
         if j is not None and (params.local_alpha or national or lv in NATIONAL_BY_LEVELS):
             h[j] = 1.0
-        if lv == NATIONAL_VOTE_BY:
+        if lv == POLL:
+            h += params.poll_load * g_nat
+            h[boom_idx] = 1.0
+            firm = obs.events[i].name
+            if firm in house_idx:
+                h[house_idx[firm]] = 1.0
+            y_nat, sd_nat = poll_logit(obs.k[i], obs.n[i], params.poll_extra_var)
+        elif lv == NATIONAL_VOTE_BY:
             h += params.vote_load * g_nat
             y_nat, sd_nat = _logit(obs.y[i]), math.sqrt(params.vote_var)
         elif national:
@@ -716,9 +757,26 @@ def filtered_series(obs: GlmObservations, params: GlmParams, ends: list[date]) -
     return out
 
 
-# 記事に載せる変化の期間(か月)。1か月の変化はほぼ誤差だけで、12か月でも誤差を超える党はまれ
-# (2026-10時点の計算)なので、国政選挙をまたぐ24か月まで並べる
-CHANGE_HORIZONS = (1, 12, 24)
+# 変化を計算する期間(か月)。1か月の変化はほぼ誤差だけなので記事の表には載せず、記事を出すかの
+# 判定にだけ使う(TABLE_HORIZONS)
+CHANGE_HORIZONS = (1, 3, 6, 12, 24)
+TABLE_HORIZONS = (3, 6, 12, 24)
+
+
+def judge_changes(parties: dict[str, list[dict]], alpha: float = 0.05) -> None:
+    """各期間の中で全党の変化をまとめてHolm法にかけ、全体の誤りをalphaに抑えて「誤差を超える」を
+    判定し、beyond_errorを書き換える。期間どうしは重なっていてほぼ同じことを問うので、期間をまたいで
+    まとめて補正すると厳しすぎる。期間ごとに「どの党が動いたか」という1つの問いとして補正する。"""
+    from scipy.stats import norm
+
+    by_h: dict[int, list[dict]] = {}
+    for changes in parties.values():
+        for c in changes:
+            by_h.setdefault(c["months"], []).append(c)
+    for cs in by_h.values():
+        pv = [2 * norm.sf(abs(c["dz"]) / c["dz_sd"]) if c["dz_sd"] > 0 else 1.0 for c in cs]
+        for c, sig in zip(cs, holm_significant(pv, alpha)):
+            c["beyond_error"] = sig
 
 
 def change_posterior(obs: GlmObservations, params: GlmParams, t0: float, t1: float) -> tuple[float, float]:
@@ -927,8 +985,9 @@ def estimate_all(obs_by_party: dict[str, GlmObservations], ells: dict[str, float
 
 
 def month_facts(result: dict, top: int = 10) -> dict:
-    """記事の事実データに載せる党勢指数v3の節。各党の最新月の値(その月までの選挙による値)、
-    CHANGE_HORIZONSか月前からの変化とその標準偏差(change_posterior)、その月の選挙のうち
+    """記事の事実データに載せる党勢指数(v4、世論調査を使わなければv3)の節。各党の最新月の値(その月までの選挙による値)、
+    CHANGE_HORIZONSか月前からの変化とその標準偏差(change_posterior、誤差を超えるかはjudge_changesで
+    期間ごとにHolm法で判定し直す)、その月の選挙のうち
     見込みから誤差を超えて外れたもの(impacts)。外れの判定は、その月の全党の観測の予測のp値に
     Holm法をかけて全体で5%に抑える。1か月に200件ほど比べるので、上位を選ぶだけだと偶然の外れが
     必ず混じる。n_testedは比べた件数。dzの党ごとの和はフィルタの値の前月からの変化で、
@@ -939,10 +998,14 @@ def month_facts(result: dict, top: int = 10) -> dict:
         cur = s[-1]
         x = cur.get("x_f", cur["x"])
         parties[p] = {"x": x, "x_lo": cur.get("x_f_lo", cur["x_lo"]), "x_hi": cur.get("x_f_hi", cur["x_hi"]),
-                      "changes": r.get("changes", [])}
+                      "changes": [dict(c) for c in r.get("changes", [])]}
         for c in r.get("contributions", []):
+            # 世論調査は選挙の結果ではなく、毎月数十件あるので外れの判定に入れない
+            if c["level"] == POLL:
+                continue
             # 占有率の尺度での動きは、dzが小さければx(1-x)dzで近似できる
             impacts.append({"party": p, **c, "dx": x * (1 - x) * c["dz"]})
+    judge_changes({p: v["changes"] for p, v in parties.items()})
     tested = [c for c in impacts if c.get("p") is not None]
     flags = {id(c): s for c, s in zip(tested, holm_significant([c["p"] for c in tested]))}
     sig = sorted((c for c in tested if flags[id(c)]), key=lambda c: -abs(c["dx"]))
@@ -950,14 +1013,14 @@ def month_facts(result: dict, top: int = 10) -> dict:
     national = [{**c, "significant": flags.get(id(c), False)} for c in impacts
                 if c["level"] in ss.NATIONAL_LEVELS or c["level"] in NATIONAL_BY_LEVELS]
     national.sort(key=lambda c: (c["vote_date"], c["name"], c["party"]))
-    return {"tau": result["tau"], "parties": parties, "impacts": sig[:top], "n_tested": len(tested),
-            "national": national}
+    return {"tau": result["tau"], "model": result.get("model", MODEL), "parties": parties, "impacts": sig[:top],
+            "n_tested": len(tested), "national": national}
 
 
 def main(argv: list[str] | None = None) -> None:
     import argparse
 
-    ap = argparse.ArgumentParser(description="logitの状態とベータ二項分布の観測による党勢の現在推定(党勢指数v3)")
+    ap = argparse.ArgumentParser(description="logitの状態とベータ二項分布の観測による党勢の現在推定(党勢指数v4、--no-pollsならv3)")
     ap.add_argument("--refit", action="store_true",
                     help="パラメータを必ず推定し直して保存する。指定しなくても、保存後の国政選挙が"
                          "データにあれば推定し直す。それ以外は保存済みのパラメータでフィルタと平滑化だけを行う")
@@ -966,17 +1029,20 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--validate", action="store_true",
                     help="国政選挙を1回ずつ除いた補間の検証も行い、結果を別のファイルに書く(8コアで30分ほどかかる)")
     ap.add_argument("--workers", type=int, default=None)
+    ap.add_argument("--no-polls", action="store_true", help="世論調査を加えずにv3で計算する")
     args = ap.parse_args(argv)
-    run(refit=args.refit, national_dev=args.national_dev, validate=args.validate, workers=args.workers)
+    run(refit=args.refit, national_dev=args.national_dev, validate=args.validate, workers=args.workers,
+        polls=not args.no_polls)
 
 
 def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
-        workers: int | None = None, validate_on_refit: bool = False) -> dict:
+        workers: int | None = None, validate_on_refit: bool = False, polls: bool = True) -> dict:
     """月次の党勢指数v3を計算して保存する。v3はv2の観測に国政・地方議会の補選の議席を加えたもの
     (補選の得票率は、国政選挙の補間を良くしなかったので使わない)。保存後の国政選挙がデータにあれば
     パラメータを推定し直す。戻り値は出力の中身(result)、保存先(path)、検証の保存先(validation_path)、
     推定し直した理由(refit_reason、推定し直さなければNone)。validate_on_refitを指定すると、
-    推定し直したときだけ補間の検証も行う。"""
+    推定し直したときだけ補間の検証も行う。pollsなら各社の世論調査の支持率も観測に加える(党勢指数v4、
+    state_space_poll.attach_polls)。"""
     from .by_elections import load_events_with_by_elections
     from .trend import OUTPUT_DIR, month_ends
 
@@ -1014,7 +1080,16 @@ def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
     else:
         params_by_party, meta, dev_by_party = load_params(PARAMS_PATH)
     obs_by_party = {p: obs_by_party[p] for p in params_by_party}
-    out = {"tau": tau.isoformat(), "params_estimated_at": meta["estimated_at"], "parties": {}}
+    # 補間の検証(下のvalidate)は世論調査を入れる前の観測で行う。世論調査の効果の検証は
+    # state_space_poll checkで別に行った(遅れを再現した予測)
+    obs_v3 = obs_by_party
+    poll_info = None
+    if polls:
+        from . import state_space_poll as sp
+
+        params_by_party, obs_by_party, poll_info = sp.attach_polls(obs_v3, params_by_party, meta, first, tau, workers)
+    out = {"tau": tau.isoformat(), "model": "v4" if polls else MODEL, "params_estimated_at": meta["estimated_at"],
+           "polls": poll_info, "parties": {}}
     prev = month_ends((tau.year, tau.month), (tau.year, tau.month))[0].replace(day=1) - timedelta(days=1)
     for party, params in params_by_party.items():
         obs = obs_by_party[party]
@@ -1052,7 +1127,7 @@ def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
         if party in dev_by_party:
             pn = dev_by_party[party]
             dev = [{"tau": m_end.isoformat(), "z_N": float(m[-1]), "z_N_se": math.sqrt(max(float(C[-1, -1]), 0.0))}
-                   for m_end, (m, C) in zip(ends, smooth(obs, pn, times))]
+                   for m_end, (m, C) in zip(ends, smooth(obs_v3[party], pn, times))]
             out["parties"][party]["national_dev"] = {"q_nat": pn.q_nat, "series": dev}
         print(party, f"x={nc.x:.3f} [{nc.x_lo:.3f}, {nc.x_hi:.3f}]", flush=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1061,7 +1136,7 @@ def run(refit: bool = False, national_dev: bool = False, validate: bool = False,
     print(path)
     vpath = None
     if validate or (validate_on_refit and reason):
-        checks = national_interpolation_check(obs_by_party, shu, san, workers)
+        checks = national_interpolation_check(obs_v3, shu, san, workers)
         vpath = OUTPUT_DIR / f"state_space_glm_validation_{tau.isoformat()}.json"
         vpath.write_text(json.dumps({"tau": tau.isoformat(), "summary": interpolation_summary(checks),
                                      "parties": checks}, ensure_ascii=False, indent=1))

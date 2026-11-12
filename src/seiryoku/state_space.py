@@ -98,6 +98,11 @@ class Params:
     # 0なら跳びなし(正規分布のランダムウォークだけ)。
     jump_rate: float = 0.0
     jump_var: float = 0.0
+    # 平均0へ減衰率decay_rate(月あたり)で戻る状態(Ornstein-Uhlenbeck過程)の添字。末尾から数える
+    # 負の添字でもよい。decay_varは定常分散。世論調査にだけ現れる一時的な動き(ブーム)に使う。
+    decay_idx: tuple[int, ...] = ()
+    decay_rate: float = 0.0
+    decay_var: float = 0.0
     # 地方選挙の観測の外れ値。確率outlier_probで、誤差の分散がoutlier_scale倍になる。
     # 無所属が大半の町村議会では無所属を除く正規化で占有率が1近くに膨らみ、
     # 首長選は0か1しかとらないので、正規分布1つでは裾が足りない。
@@ -288,6 +293,13 @@ def _predict(m, C, dt, params: Params, local_idx: list[int] = ()):
     C[1, 1] += vbb
     for i in local_idx:
         C[i, i] += params.q_alpha * dt
+    if params.decay_idx:
+        f = math.exp(-params.decay_rate * dt)
+        for i in params.decay_idx:
+            m[i] *= f
+            C[i, :] *= f
+            C[:, i] *= f
+            C[i, i] += params.decay_var * -math.expm1(-2 * params.decay_rate * dt)
     return m, C
 
 
@@ -295,6 +307,8 @@ def _transition(dt: float, params: Params, k_state: int) -> np.ndarray:
     g, phi, *_ = _slope_transition(dt, params)
     F = np.eye(k_state)
     F[0, 1], F[1, 1] = g, phi
+    for i in params.decay_idx:
+        F[i, i] = math.exp(-params.decay_rate * dt)
     return F
 
 

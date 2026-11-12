@@ -24,6 +24,8 @@ MAINTENANCE_PROMPT_PATH = NOTES_DIR / "monthly_maintenance_prompt.md"
 CLAUDE = Path.home() / ".local" / "bin" / "claude"
 
 # 何か月記事が出なければ、変化がなくても記事にするか
+# 党勢指数v4を月次実行に入れた月。これ以降の最初の記事で切り替えを伝える
+V4_FROM = "2026-11"
 MAX_GAP_MONTHS = 6
 
 # 失敗の回数は月ごとにここで数える。systemdのStartLimitBurstで数えると、月次実行の
@@ -79,6 +81,8 @@ def article_reasons(trend: dict | None, year: int, month: int, articles: dict[st
         if any(c["level"] not in national_levels for c in trend.get("impacts", [])):
             reasons.append("見込みから誤差を超えて外れた地方選挙がある")
     earlier = [k for k in articles if k < _ym(year, month)]
+    if trend and trend.get("model") == "v4" and not [k for k in earlier if k >= V4_FROM]:
+        reasons.append("党勢指数をv4(世論調査入り)に切り替えた")
     if not earlier:
         reasons.append("最初の記事")
     else:
@@ -119,13 +123,8 @@ def decide(trend: dict | None, year: int, month: int, warnings: list[str]) -> di
 
 
 def copy_images(image_dir: Path, n: int, dest: Path = NOTES_DIR / "images") -> list[Path]:
-    """記事に載せる図を notes/images/ に回ごとの名前でコピーする。差の散布図は、
-    出ている中でいちばん長い期間のものを使う。"""
-    pairs = [("trend_v2.png", "trend_v2"), ("trend_v2_vs_support.png", "trend_v2_vs_support")]
-    diffs = sorted(image_dir.glob("trend_v2_support_diff_*m.png"),
-                   key=lambda p: int(re.search(r"_(\d+)m\.png$", p.name).group(1)))
-    if diffs:
-        pairs.append((diffs[-1].name, "trend_v2_support_diff"))
+    """記事に載せる図を notes/images/ に回ごとの名前でコピーする。"""
+    pairs = [("trend_v2.png", "trend_v2")]
     dest.mkdir(parents=True, exist_ok=True)
     copied = []
     for src_name, name in pairs:
@@ -161,11 +160,36 @@ def national_by_lines(national_by: dict | None) -> list[str]:
     return lines
 
 
+def poll_lines(t: dict) -> list[str]:
+    """世論調査の取り込みの記録と警告。"""
+    out = []
+    u = t.get("poll_update") or {}
+    if u.get("error"):
+        out.append(f"[要確認] Wikipediaの世論調査の取り直しに失敗し、保存済みの世論調査で計算した: {u['error']}")
+    else:
+        if u.get("unknown_parties"):
+            out.append(f"[要確認] 世論調査の表に系譜にない政党名がある: {'、'.join(u['unknown_parties'])}")
+        if u.get("missing"):
+            out.append(f"[要確認] 保存済みの世論調査のうち{u['missing']}件がWikipediaから読めなかった(保存済みの値を"
+                       "使った)。総選挙のあとならページの名前が変わったので、wikipedia_polls.PAGESに足す")
+    p = t.get("polls") or {}
+    if p:
+        out.append(f"世論調査: {p['n']}件(最新 {p['last']})")
+        if p.get("refit_reason"):
+            out.append(f"[要確認] 世論調査のパラメータを推定し直した({p['refit_reason']})")
+        if p.get("parties_without_polls"):
+            out.append(f"[要確認] 世論調査のパラメータがなくv3のままの党: {'、'.join(p['parties_without_polls'])}")
+    return out
+
+
 def collect_warnings(facts_text: str, unknown_labels: list[str], refit_reason: str | None,
                      validated: bool, provisional_start_changed: bool, support_failures: int | None,
-                     national_by: dict | None = None) -> list[str]:
+                     national_by: dict | None = None, system_change: list[str] | None = None,
+                     polls: list[str] | None = None) -> list[str]:
     warnings = [l.strip() for l in facts_text.splitlines() if l.startswith(("警告:", "!!!"))]
     warnings += national_by_lines(national_by)
+    warnings += system_change or []
+    warnings += [w for w in polls or [] if w.startswith("[要確認]")]
     if unknown_labels:
         warnings.append(f"[要確認] 支持率の略称表にない政党名: {', '.join(unknown_labels)}"
                         "(src/seiryoku/fetch/miharu.py の ABBREVIATIONS に追加する)")
@@ -202,7 +226,8 @@ def prepare(year: int, month: int, image_dir: Path, facts_text: str, unknown_lab
             refit_reason: str | None, validated: bool, provisional_start_changed: bool,
             national_by: dict | None = None, trend: dict | None = None) -> Path:
     warnings = collect_warnings(facts_text, unknown_labels, refit_reason, validated,
-                                provisional_start_changed, support_fetch_failures(), national_by)
+                                provisional_start_changed, support_fetch_failures(), national_by,
+                                (trend or {}).get("system_change"), poll_lines(trend or {}))
     d = decide(trend, year, month, warnings)
     n = d["n"]
     copied = copy_images(image_dir, n) if n is not None else []

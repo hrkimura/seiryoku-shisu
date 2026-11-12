@@ -145,7 +145,7 @@ def _update_support_analysis(history: list[dict]) -> dict:
 
 
 def _update_trend_v2(image_dir: Path) -> dict:
-    """党勢指数v3を計算し、図を描いて、記事の事実データに載せる節を返す。補間の検証は
+    """党勢指数v4を計算し、図を描いて、記事の事実データに載せる節を返す。補間の検証は
     推定し直した月だけ回し(30分ほど)、図2には最新の検証の結果を使う。失敗しても月次実行は止めない。
     補選の取り込みに失敗したときは、前回までに保存した補選で計算する。"""
     from . import by_elections, charts
@@ -161,30 +161,39 @@ def _update_trend_v2(image_dir: Path) -> dict:
         national_by.update(by_elections.update_national(date.today()))
     except Exception as e:
         national_by["error"] = f"{type(e).__name__}: {e}"
+    poll_update = None
+    try:
+        from .fetch import wikipedia_polls
+
+        poll_update = wikipedia_polls.update_history()
+    except Exception as e:
+        poll_update = {"error": f"{type(e).__name__}: {e}"}
     try:
         res = glm.run(refit=REFIT_REQUEST_PATH.exists(), validate_on_refit=True)
         if res["validation_path"]:
             REFIT_REQUEST_PATH.unlink(missing_ok=True)
         result = res["result"]
+        system_change = []
+        if res["refit_reason"]:
+            from . import system_change as sc
+
+            try:
+                system_change = sc.check()
+            except Exception as e:
+                system_change = [f"[要確認] 選挙制度の変化の検知に失敗した: {type(e).__name__}: {e}"]
         validations = sorted(OUTPUT_DIR.glob("trend/state_space_glm_validation_*.json"))
         validation = json.loads(validations[-1].read_text()) if validations else None
         charts.generate_trend_chart(result, out_path=image_dir / "trend_v2.png")
         charts.generate_trend_by_party_chart(result, validation, out_path=image_dir / "trend_v2_by_party.png")
-        support = support_history.load_history()
-        diffs = gap = None
-        if support:
-            gap = support_analysis.trend_support_gap(result, support[-1])
-            charts.generate_trend_support_scatter(result, support[-1], out_path=image_dir / "trend_v2_vs_support.png")
-            diffs = {h: support_analysis.trend_support_diffs(result, support, h) for h in support_analysis.DIFF_HORIZONS}
-            for h, d in diffs.items():
-                if d["points"]:
-                    charts.generate_trend_support_diff_scatter(d, out_path=image_dir / f"trend_v2_support_diff_{h}m.png")
     except Exception as e:
-        return {"error": f"{type(e).__name__}: {e}"}
+        return {"error": f"{type(e).__name__}: {e}", "poll_update": poll_update}
+    # v4は世論調査を観測に使うので、三春氏の支持率(同じ世論調査の集計)との散布図や食い違いの判定は
+    # 循環になり、もう載せない
     return {**glm.month_facts(result), "refit_reason": res["refit_reason"],
             "validated": res["validation_path"] is not None,
-            "validation_tau": validation["tau"] if validation else None, "support_diff": diffs,
-            "support_gap": gap, "by_election_error": by_election_error, "national_by": national_by}
+            "validation_tau": validation["tau"] if validation else None,
+            "by_election_error": by_election_error, "national_by": national_by,
+            "system_change": system_change, "polls": result.get("polls"), "poll_update": poll_update}
 
 
 def run() -> dict:
@@ -289,7 +298,7 @@ def _print_support_summary(sa: dict) -> None:
 
 
 def _print_trend_summary(t: dict) -> None:
-    print("\n党勢指数v3:")
+    print("\n党勢指数v4:")
     if t.get("error"):
         print(f"  [失敗] {t['error']}")
         return
@@ -301,16 +310,8 @@ def _print_trend_summary(t: dict) -> None:
         chs = [f"{c['months']}か月 {c['dx'] * 100:+.1f}±{2 * c['dx_sd'] * 100:.1f}{'*' if c['beyond_error'] else ''}"
                for c in r.get("changes", [])]
         print(f"  {party}: {r['x'] * 100:.1f}%(変化 {'、'.join(chs) or '—'}、*は誤差を超える)")
-    for h, d in (t.get("support_diff") or {}).items():
-        if d["points"]:
-            line = f"  支持率の{h}か月差との散布図: {len(d['periods'])}期間・{d['n']}点"
-            if d["pearson"]:
-                line += f", r={d['pearson']['r']:+.2f}"
-            if d["spearman"]:
-                line += f", ρ={d['spearman']['rho']:+.2f}"
-            print(line)
-        else:
-            print(f"  支持率の{h}か月差との散布図: {h}か月離れた月末の支持率がまだそろわないため描いていません")
+    for line in monthly_article.poll_lines(t):
+        print("  " + line)
     if t["refit_reason"]:
         print(f"  [要確認] パラメータを推定し直し、補間の検証も回し直しました({t['refit_reason']})。")
 

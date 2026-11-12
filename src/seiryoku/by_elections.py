@@ -280,16 +280,18 @@ def paired_difference(a: dict[str, list[dict]], b: dict[str, list[dict]]) -> dic
 
 
 def backtest(variants: list[str] | None = None, workers: int | None = None,
-             endorse_by: bool = False, endorse_general: bool = False, online: bool = False) -> dict:
+             endorse_by: bool = False, endorse_general: bool = False, online: bool = False,
+             ablation: str | None = None, out_dir: Path = BACKTEST_DIR) -> dict:
     """補選を使うかどうかの形ごとに国政選挙の補間を行い、結果を保存する。保存済みの形は計算し直さない
     (1つの形で8コア30分ほどかかる)。endorse_generalなら、通常選挙の観測と議席と得票の曲線の両方で
     無所属の当選者を支援した党に等分する。このとき補間で当てる値も変わるので、二乗誤差は推薦を
-    使わない形とそのままは比べられない。onlineなら補間ではなく、投票日より前のデータだけでの予測で比べる。"""
+    使わない形とそのままは比べられない。onlineなら補間ではなく、投票日より前のデータだけでの予測で比べる。
+    ablationを指定すると、モデルの部品(state_space_glm.ABLATIONS)を外した形で行う。"""
     from . import state_space as ss
     from . import state_space_glm as glm
     from .trend import first_appearance
 
-    BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     events, _ = load_events_with_by_elections(endorse_by, endorse_general)
     first = first_appearance([e for e in events if e.level not in BY_LEVELS])
     parties = ss.tracked_parties([e for e in events if e.level not in BY_LEVELS])
@@ -298,15 +300,17 @@ def backtest(variants: list[str] | None = None, workers: int | None = None,
     san = ss.load_seat_vote_points(house="sangiin", endorsed=endorse_general)
     results = {}
     for name in variants or list(VARIANTS):
-        suffix = ("_推薦全部" if endorse_general else ("_推薦補選" if endorse_by else "")) + ("_オンライン" if online else "")
-        path = BACKTEST_DIR / f"backtest_{name}{suffix}.json"
+        suffix = (("_推薦全部" if endorse_general else ("_推薦補選" if endorse_by else ""))
+                  + (f"_{ablation}" if ablation else "") + ("_オンライン" if online else ""))
+        path = out_dir / f"backtest_{name}{suffix}.json"
         if path.exists():
             results[name] = json.loads(path.read_text(encoding="utf-8"))["parties"]
             continue
         print("補間:", name, flush=True)
         check = glm.national_online_check if online else glm.national_interpolation_check
-        checks = check(obs, shu, san, workers, drop_levels=VARIANTS[name])
-        path.write_text(json.dumps({"drop_levels": sorted(VARIANTS[name]), "summary": glm.interpolation_summary(checks),
+        checks = check(obs, shu, san, workers, drop_levels=VARIANTS[name], ablation=ablation)
+        path.write_text(json.dumps({"drop_levels": sorted(VARIANTS[name]), "ablation": ablation,
+                                    "summary": glm.interpolation_summary(checks),
                                     "parties": checks}, ensure_ascii=False, indent=1), encoding="utf-8")
         results[name] = checks
     return results
@@ -318,12 +322,25 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="補欠選挙の取得と、補選を使うかどうかの補間の比較")
     ap.add_argument("command", choices=["crawl", "backtest"])
     ap.add_argument("--workers", type=int, default=None)
+    ap.add_argument("--online", action="store_true", help="補間ではなく投票日より前のデータだけでの予測で比べる")
+    ap.add_argument("--ablation", help="外すモデルの部品(国政のみ、地盤なし、水準差なし、負荷1)。"
+                                       "指定すると両方の補選を使う形で、部品を外さない形と比べる")
+    ap.add_argument("--out", type=Path, default=BACKTEST_DIR, help="結果の保存先。保存済みの形は計算し直さない")
     args = ap.parse_args(argv)
     if args.command == "crawl":
         build_gikai_cache()
         return
-    results = backtest(workers=args.workers)
     from . import state_space_glm as glm
+    if args.ablation:
+        base = backtest(["両方"], args.workers, online=args.online, out_dir=args.out)["両方"]
+        r = backtest(["両方"], args.workers, online=args.online, ablation=args.ablation, out_dir=args.out)["両方"]
+        s, d = glm.interpolation_summary(r), paired_difference(base, r)
+        print(f"{args.ablation}: n={s['n']} rmse={s['rmse']:.4f} median_abs={s['median_abs']:.4f} "
+              f"coverage={s['coverage']:.2f}")
+        print(f"{args.ablation} - 両方: 二乗誤差の差の平均 {d['mean']:+.5f} (標準誤差 {d['se']:.5f}, "
+              f"{d['n']}件, {d['elections']}選挙)")
+        return
+    results = backtest(workers=args.workers, online=args.online, out_dir=args.out)
     for name, r in results.items():
         s = glm.interpolation_summary(r)
         print(f"{name}: n={s['n']} rmse={s['rmse']:.4f} median_abs={s['median_abs']:.4f} coverage={s['coverage']:.2f}")
