@@ -174,6 +174,7 @@ def _update_trend_v2(image_dir: Path) -> dict:
             REFIT_REQUEST_PATH.unlink(missing_ok=True)
         result = res["result"]
         system_change = []
+        local_value_lines: list[str] = []
         if res["refit_reason"]:
             from . import system_change as sc
 
@@ -181,6 +182,13 @@ def _update_trend_v2(image_dir: Path) -> dict:
                 system_change = sc.check()
             except Exception as e:
                 system_change = [f"[要確認] 選挙制度の変化の検知に失敗した: {type(e).__name__}: {e}"]
+            # 地方選挙が国政の党勢の推定に何を足すかを、国政選挙が1つ増えたところで確かめ直す(1時間ほど)
+            from . import local_value
+
+            try:
+                local_value_lines = local_value.status_lines(local_value.run())
+            except Exception as e:
+                local_value_lines = [f"[要確認] 地方選挙の役割の検証に失敗した: {type(e).__name__}: {e}"]
         validations = sorted(OUTPUT_DIR.glob("trend/state_space_glm_validation_*.json"))
         validation = json.loads(validations[-1].read_text()) if validations else None
         charts.generate_trend_chart(result, out_path=image_dir / "trend_v2.png")
@@ -193,7 +201,8 @@ def _update_trend_v2(image_dir: Path) -> dict:
             "validated": res["validation_path"] is not None,
             "validation_tau": validation["tau"] if validation else None,
             "by_election_error": by_election_error, "national_by": national_by,
-            "system_change": system_change, "polls": result.get("polls"), "poll_update": poll_update}
+            "system_change": system_change, "local_value": local_value_lines,
+            "polls": result.get("polls"), "poll_update": poll_update}
 
 
 def run() -> dict:

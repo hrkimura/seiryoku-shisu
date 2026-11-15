@@ -13,6 +13,8 @@ def test_run_produces_consistent_indices(tmp_path, monkeypatch):
     # 推定し直しの依頼は次の月次実行のためのもの。テストで使い切ると、推定し直しと検証(1時間ほど)が
     # ここで走ったうえ、月次実行では推定し直されなくなる。
     monkeypatch.setattr(cli, "REFIT_REQUEST_PATH", tmp_path / "refit_requested")
+    # 実行のたびに網羅率の履歴へ1行足すので、本物の履歴(記事の網羅率の図に使う)に書かせない
+    monkeypatch.setattr(coverage_history, "HISTORY_PATH", tmp_path / "coverage_history.json")
     result = run()
 
     assert result["C_p"], "C_pが空です"

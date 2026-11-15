@@ -185,10 +185,11 @@ def poll_lines(t: dict) -> list[str]:
 def collect_warnings(facts_text: str, unknown_labels: list[str], refit_reason: str | None,
                      validated: bool, provisional_start_changed: bool, support_failures: int | None,
                      national_by: dict | None = None, system_change: list[str] | None = None,
-                     polls: list[str] | None = None) -> list[str]:
+                     polls: list[str] | None = None, local_value: list[str] | None = None) -> list[str]:
     warnings = [l.strip() for l in facts_text.splitlines() if l.startswith(("警告:", "!!!"))]
     warnings += national_by_lines(national_by)
     warnings += system_change or []
+    warnings += local_value or []
     warnings += [w for w in polls or [] if w.startswith("[要確認]")]
     if unknown_labels:
         warnings.append(f"[要確認] 支持率の略称表にない政党名: {', '.join(unknown_labels)}"
@@ -227,7 +228,8 @@ def prepare(year: int, month: int, image_dir: Path, facts_text: str, unknown_lab
             national_by: dict | None = None, trend: dict | None = None) -> Path:
     warnings = collect_warnings(facts_text, unknown_labels, refit_reason, validated,
                                 provisional_start_changed, support_fetch_failures(), national_by,
-                                (trend or {}).get("system_change"), poll_lines(trend or {}))
+                                (trend or {}).get("system_change"), poll_lines(trend or {}),
+                                (trend or {}).get("local_value"))
     d = decide(trend, year, month, warnings)
     n = d["n"]
     copied = copy_images(image_dir, n) if n is not None else []
