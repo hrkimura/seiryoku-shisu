@@ -151,3 +151,31 @@ def test_compare_thermo_bounds_and_columns():
     assert t["n_a"].tolist() == [2] * 3 and t["mean_a"].tolist() == [5.0] * 3
     assert t["n_b"].tolist() == [3] * 3 and t["mean_b"].tolist() == pytest.approx([10 / 3] * 3)
     assert t["p_holm"].tolist() == pytest.approx(lca.holm(t["p"].to_numpy()).tolist())
+
+
+def test_composition_groups_and_other():
+    s = pd.Series([7, 7, 1, 3, 14, 99, np.nan, 7])
+    c = figures.composition(s, {"参政党": {7}, "自民党": {1}}, "その他")
+    assert c.index.tolist() == ["参政党", "自民党", "その他"]
+    assert c.tolist() == pytest.approx([37.5, 12.5, 50.0])
+    empty = figures.composition(pd.Series([1, 1]), {"参政党": {7}, "自民党": {1}}, "その他")
+    assert empty.tolist() == pytest.approx([0.0, 100.0, 0.0])
+
+
+def test_survey_vs_actual_shares_among_voters():
+    df = pd.DataFrame({"Q4": [1, 1, 6, 2, 13, 99]})
+    t = figures.survey_vs_actual(df).set_index("party")
+    assert t.loc["自民", "survey"] == pytest.approx(50.0)
+    assert t.loc["参政", "survey"] == pytest.approx(25.0)
+    assert t.loc["共産", "survey"] == 0.0
+    assert t.loc["参政", "actual"] == 12.55 and len(t) == len(figures.ACTUAL_2025)
+
+
+def test_significant_uses_unadjusted_for_age():
+    t = pd.DataFrame({"p_holm": [0.01, 0.01, 0.2], "p_adj_holm": [0.2, 0.2, 0.01]},
+                     index=["40〜59歳", "男性", "新聞"])
+    assert figures.significant(t.loc["40〜59歳"]) is True
+    assert figures.significant(t.loc["男性"]) is False
+    assert figures.significant(t.loc["新聞"]) is True
+    t2 = pd.DataFrame({"p_holm": [0.05], "p_adj_holm": [0.05]}, index=["男性"])
+    assert figures.significant(t2.loc["男性"]) is False

@@ -44,3 +44,10 @@ def test_lca_outputs_and_figures(tmp_path):
     s = df[df.Q4 == 6]
     figures.fig_thermo(s[s.Q3 == sg.Q3_SANSEITO], s[s.Q3 == sg.Q3_LDP], tmp_path / "d.png")
     assert (tmp_path / "c.png").stat().st_size > 10000 and (tmp_path / "d.png").stat().st_size > 10000
+    figures.fig_typical(pd.read_csv(pu.OUT / "utas2026_profile.csv"), tmp_path / "e.png")
+    figures.fig_survey_vs_actual(figures.survey_vs_actual(df), tmp_path / "f.png")
+    raw = pd.read_csv(pu.DATA)
+    figures.fig_class_attitudes(raw, pd.read_csv(pu.OUT / "utas2026_lca.csv"), 4, tmp_path / "g.png")
+    figures.fig_stacked([("a", figures.composition(raw["Q2"], {"参政党": {7}}, "その他"))],
+                        {"参政党": figures.C_SANSEI, "その他": figures.GRAYS[0]}, "t", tmp_path / "h.png")
+    assert all((tmp_path / f"{x}.png").stat().st_size > 5000 for x in "efgh")
