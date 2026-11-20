@@ -436,19 +436,27 @@ def fig_stacked(rows: list[tuple[str, pd.Series]], colors: dict[str, str], title
     plt.close(fig)
 
 
-def fig_class_attitudes(df: pd.DataFrame, cls: pd.DataFrame, core: int, path: Path) -> None:
-    """強く反対するクラスと回答者全体の、政策態度の賛成(1・2)の割合。"""
+def class_attitudes(df: pd.DataFrame, cls: pd.DataFrame, core: int) -> pd.DataFrame:
+    """強く反対するクラスと回答者全体の、政策態度の各項目の側に答えた割合(%)。"""
     from lca import ITEMS
-    by_col = {it.col: it.label for it in ITEMS_PROFILE}
+    # 外国人の2問は賛成側と反対側の両方が ITEMS_PROFILE にあり、後に置いた反対側を使う
+    by_col = {it.col: it for it in ITEMS_PROFILE}
     d = df.merge(cls, on="ID")
-    labels, core_v, all_v = [], [], []
+    rows = []
     for c in ITEMS:
+        it = by_col[c]
         x = d[c].where(d[c].isin([1, 2, 3, 4, 5]))
-        labels.append(by_col[c])
-        core_v.append((x[d["class"] == core].dropna() <= 2).mean() * 100)
-        all_v.append((x.dropna() <= 2).mean() * 100)
+        in_core = x[d["class"] == core].dropna()
+        rows.append({"label": it.label, "core": in_core.isin(it.yes).mean() * 100,
+                     "all": x.dropna().isin(it.yes).mean() * 100})
+    return pd.DataFrame(rows)
+
+
+def fig_class_attitudes(df: pd.DataFrame, cls: pd.DataFrame, core: int, path: Path) -> None:
+    t = class_attitudes(df, cls, core)
+    labels, core_v, all_v = t["label"].tolist(), t["core"].tolist(), t["all"].tolist()
     order = np.argsort(np.array(core_v) - np.array(all_v))
-    fig, ax = plt.subplots(figsize=(8.5, 0.32 * len(ITEMS) + 1.6), dpi=200)
+    fig, ax = plt.subplots(figsize=(8.5, 0.32 * len(labels) + 1.6), dpi=200)
     ax.grid(True, axis="x", color=GRID, lw=0.6)
     ax.set_axisbelow(True)
     for i, j in enumerate(order):
@@ -461,7 +469,7 @@ def fig_class_attitudes(df: pd.DataFrame, cls: pd.DataFrame, core: int, path: Pa
     ax.set_yticklabels([labels[j] for j in order], fontsize=9.5)
     ax.tick_params(axis="y", length=0)
     ax.set_xlim(0, 100)
-    ax.set_xlabel("賛成(中国・格差などの対の質問では前者に近い)と答えた割合(%)", fontsize=9.5)
+    ax.set_xlabel("その項目の側に答えた割合(%)", fontsize=9.5)
     ax.set_title("強く反対するクラスの政策態度", fontsize=12, loc="left", pad=26)
     ax.legend(loc="lower left", bbox_to_anchor=(0.0, 1.0), ncol=2, frameon=False, fontsize=9.5)
     fig.tight_layout()

@@ -344,3 +344,22 @@ def test_loyalty_by_party_counts_same_party_and_ldp():
     assert t.loc[("自民", "support"), "pct"] == pytest.approx(100.0)
     assert t.loc[("自民", "vote26"), "pct"] == pytest.approx(100.0)
     assert "共産" not in t.index.get_level_values("party")
+
+
+def test_class_attitudes_uses_oppose_side_for_foreigner_items():
+    from lca import ITEMS
+    n = 4
+    df = pd.DataFrame({c: [1, 2, 4, 3] for c in ITEMS})
+    df["Q35_8"] = [5, 4, 4, 1]
+    df["ID"] = range(n)
+    cls = pd.DataFrame({"ID": range(n), "class": [0, 0, 1, 1]})
+    t = figures.class_attitudes(df, cls, core=0).set_index("label")
+    assert t.loc["外国人労働者の受け入れ推進に反対", "core"] == pytest.approx(100.0)
+    assert t.loc["外国人労働者の受け入れ推進に反対", "all"] == pytest.approx(75.0)
+    assert "外国人労働者の受け入れを進める" not in t.index
+    assert t.loc["防衛力を強化すべき", "core"] == pytest.approx(100.0)
+    assert t.loc["防衛力を強化すべき", "all"] == pytest.approx(50.0)
+    df.loc[3, "Q35_1"] = 99
+    t2 = figures.class_attitudes(df, cls, core=0).set_index("label")
+    assert t2.loc["防衛力を強化すべき", "all"] == pytest.approx(200 / 3)
+    assert len(t) == len(ITEMS)
