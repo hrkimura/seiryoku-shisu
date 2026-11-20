@@ -9,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.font_manager as fm
+import matplotlib.ticker
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -226,8 +227,8 @@ def fig_thermo(stay: pd.DataFrame, back: pd.DataFrame, path: Path) -> None:
 
 TYPICAL_DEMO = ["18〜39歳", "40〜59歳", "60歳以上", "男性", "大学・大学院卒", "動画サイト", "SNS", "新聞", "テレビ"]
 TYPICAL_ATT = ["憲法を変える必要がある", "首相は靖国に参拝してほしい", "財政再建より財政出動", "消費税率を引き下げるべき",
-               "中国は脅威", "日米安保を強化すべき", "政治は腐敗、強い指導者が必要", "外国人労働者の受け入れを進める",
-               "在留外国人で社会が豊かになる", "選択的夫婦別姓を認めるべき", "気候変動のため暮らしを見直す",
+               "中国は脅威", "日米安保を強化すべき", "政治は腐敗、強い指導者が必要", "外国人労働者の受け入れ推進に反対",
+               "在留外国人で文化が脅かされる", "選択的夫婦別姓を認めるべき", "気候変動のため暮らしを見直す",
                "同性婚を認めるべき", "高市内閣を支持"]
 AGE_LABELS = {"18〜39歳", "40〜59歳", "60歳以上"}
 
@@ -242,7 +243,7 @@ def significant(row: pd.Series) -> bool:
 def fig_typical(t: pd.DataFrame, path: Path) -> None:
     """参政党の投票者と他党の投票者の割合を、項目ごとに横棒で並べる。"""
     t = t.set_index("label")
-    panels = [("属性・情報源", TYPICAL_DEMO), ("政策態度(賛成の割合)", TYPICAL_ATT)]
+    panels = [("属性・情報源", TYPICAL_DEMO), ("政策態度(項目に示した側を選んだ割合)", TYPICAL_ATT)]
     heights = [len(p[1]) for p in panels]
     fig, axes = plt.subplots(2, 1, figsize=(8.5, 0.36 * sum(heights) + 2.2), dpi=200,
                              gridspec_kw={"height_ratios": heights}, sharex=True)
@@ -267,7 +268,7 @@ def fig_typical(t: pd.DataFrame, path: Path) -> None:
         ax.set_axisbelow(True)
         ax.set_title(title, fontsize=11, loc="left", color=INK)
     axes[0].legend(loc="lower right", bbox_to_anchor=(1.0, 1.06), ncol=2, frameon=False, fontsize=9.5)
-    axes[-1].set_xlabel("割合(%)。細い線は95%区間。†は差がある項目(年代以外は年齢・性別で調整、Holm法で補正)", fontsize=9)
+    axes[-1].set_xlabel("割合(%)。細い線は95%区間。†は差がある項目(年代・性別は素の比較、それ以外は年齢・性別で調整。Holm法で補正)", fontsize=9)
     fig.tight_layout()
     fig.savefig(path, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
@@ -284,33 +285,113 @@ GRAYS = ["#a9a8a1", "#d6d5ce"]
 
 
 def survey_vs_actual(df: pd.DataFrame) -> pd.DataFrame:
-    """比例で投票した回答者の党別の割合と、実際の得票率。"""
+    """比例で投票した回答者の党別の割合(95%区間つき)と、実際の得票率。"""
     v = df.loc[df["Q4"].isin(VOTED), "Q4"].map(PARTY_Q4)
-    sh = v.value_counts(normalize=True) * 100
+    counts = v.value_counts()
+    n = len(v)
     out = pd.DataFrame({"party": list(ACTUAL_2025), "actual": list(ACTUAL_2025.values())})
-    out["survey"] = out["party"].map(sh).fillna(0.0)
+    k = out["party"].map(counts).fillna(0).astype(int)
+    out["survey"] = k / n * 100
+    ci = [wilson(int(x), n) for x in k]
+    out["lo"] = [c[0] * 100 for c in ci]
+    out["hi"] = [c[1] * 100 for c in ci]
     return out
 
 
+# ラベルが点や区間と重ならないよう、党ごとに手で決めた位置(点からのずれ、ポイント単位)
+LABEL_OFFSET = {"自民": (8, -4), "国民": (8, -4), "参政": (8, -10), "立憲": (-30, -4), "公明": (8, -4),
+                "維新": (-30, -4), "れいわ": (8, -4), "保守": (8, -4), "共産": (-30, -4), "みらい": (-36, -4),
+                "社民": (8, -4)}
+LOG_TICKS = [0.5, 1, 2, 5, 10, 20, 50]
+
+
 def fig_survey_vs_actual(t: pd.DataFrame, path: Path) -> None:
-    t = t.iloc[::-1].reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(8, 4.2), dpi=200)
-    ax.grid(True, axis="x", color=GRID, lw=0.6)
+    fig, ax = plt.subplots(figsize=(6.4, 6.0), dpi=200)
+    lo_lim, hi_lim = 0.3, 60
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.grid(True, which="major", color=GRID, lw=0.6)
     ax.set_axisbelow(True)
-    for i, r in t.iterrows():
-        ax.hlines(i, min(r.actual, r.survey), max(r.actual, r.survey), color=AXIS, lw=2, zorder=1)
+    ax.plot([lo_lim, hi_lim], [lo_lim, hi_lim], color=AXIS, lw=1.2, ls="--", zorder=1)
+    ax.annotate("調査と実際が同じ", (1.2, 1.2), xytext=(-4, 6), textcoords="offset points", rotation=45,
+                rotation_mode="anchor", fontsize=9, color=INK2, ha="right")
+    for _, r in t.iterrows():
         hi = r.party == "参政"
-        ax.scatter(r.actual, i, s=46, color=SURFACE, edgecolor=INK2, linewidth=1.6, zorder=3,
-                   label="実際の得票率" if i == 0 else None)
-        ax.scatter(r.survey, i, s=46, color=C_SANSEI if hi else INK2, edgecolor=SURFACE, linewidth=1.2, zorder=4,
-                   label="調査で答えた人の割合" if i == 0 else None)
-    ax.set_yticks(range(len(t)))
-    ax.set_yticklabels(t["party"], fontsize=10)
-    ax.tick_params(axis="y", length=0)
-    ax.set_xlim(0, 42)
-    ax.set_xlabel("2025年参院選の比例代表(%)", fontsize=9.5)
-    ax.set_title("調査で答えた投票先と、実際の得票率", fontsize=12, loc="left")
-    ax.legend(loc="lower right", frameon=False, fontsize=9.5)
+        col = C_SANSEI if hi else INK2
+        ax.vlines(r.actual, r.lo, r.hi, color=col, lw=1.2, zorder=2)
+        ax.scatter(r.actual, r.survey, s=60 if hi else 40, color=col, edgecolor=SURFACE, linewidth=1.2, zorder=3)
+        ax.annotate(r.party, (r.actual, r.survey), xytext=LABEL_OFFSET.get(r.party, (8, -4)),
+                    textcoords="offset points", fontsize=10, color=INK, fontweight="bold" if hi else "normal")
+    ax.set_xlim(lo_lim, hi_lim)
+    ax.set_ylim(lo_lim, hi_lim)
+    ax.set_aspect("equal")
+    for axis in (ax.xaxis, ax.yaxis):
+        axis.set_major_locator(matplotlib.ticker.FixedLocator(LOG_TICKS))
+        axis.set_major_formatter(matplotlib.ticker.FixedFormatter([f"{v:g}" for v in LOG_TICKS]))
+        axis.set_minor_locator(matplotlib.ticker.NullLocator())
+    ax.set_xlabel("実際の得票率(%、対数目盛)", fontsize=10)
+    ax.set_ylabel("調査で比例の投票先を答えた人の中での割合(%、対数目盛)", fontsize=10)
+    ax.set_title("2025年参院選の比例代表:調査と実際", fontsize=12, loc="left")
+    fig.tight_layout()
+    fig.savefig(path, facecolor=SURFACE, bbox_inches="tight")
+    plt.close(fig)
+
+
+# 2025年の比例の投票先(Q4)ごとに、今の支持(Q2)と2026年の投票(Q3)で「同じ党」とみなすコード。
+# 立憲・公明は2026年に中道改革連合へ合流したので、中道(Q2=2, Q3=2)も同じ党に数える。
+SAME_PARTY = {1: ("自民", {1}, {1}), 2: ("立憲", {2, 3}, {2}), 4: ("公明", {2, 4}, {2}), 3: ("国民", {6}, {4}),
+              5: ("維新", {5}, {3}), 6: ("参政", {7}, {5}), 7: ("共産", {9}, {7}), 8: ("れいわ", {10}, {8}),
+              9: ("保守", {11}, {9}), 11: ("みらい", {8}, {6})}
+LOYALTY_COLS = {"support": "今もその党を支持", "ldp": "今は自民党を支持",
+                "vote26": "2026年もその党に投票", "ldp26": "2026年は自民党に投票"}
+
+
+def loyalty_by_party(raw: pd.DataFrame) -> pd.DataFrame:
+    """2025年の比例の投票先ごとの、党への結びつきの3つの割合(%)と95%区間。"""
+    rows = []
+    for code, (name, q2, q3) in SAME_PARTY.items():
+        s = raw[raw["Q4"] == code]
+        n = len(s)
+        if n == 0:
+            continue
+        hits = {"support": s["Q2"].isin(q2).sum(), "ldp": (s["Q2"] == 1).sum(),
+                "vote26": s["Q3"].isin(q3).sum(), "ldp26": (s["Q3"] == 1).sum()}
+        for key, k in hits.items():
+            if key in ("ldp", "ldp26") and code == 1:
+                continue
+            lo, hi = wilson(int(k), n)
+            rows.append({"party": name, "n": n, "measure": key, "pct": k / n * 100, "lo": lo * 100, "hi": hi * 100})
+    return pd.DataFrame(rows)
+
+
+def fig_loyalty_compare(t: pd.DataFrame, path: Path) -> None:
+    parties = list(dict.fromkeys(t["party"]))
+    n_of = dict(zip(t["party"], t["n"]))
+    fig, axes = plt.subplots(2, 2, figsize=(8.5, 8.4), dpi=200, sharey=True, sharex=True)
+    axes = axes.ravel()
+    for ax, (key, title) in zip(axes, LOYALTY_COLS.items()):
+        d = t[t["measure"] == key].set_index("party")
+        ax.grid(True, axis="x", color=GRID, lw=0.6)
+        ax.set_axisbelow(True)
+        for i, p in enumerate(parties):
+            if p not in d.index:
+                continue
+            r = d.loc[p]
+            col = C_SANSEI if p == "参政" else INK2
+            ax.hlines(i, r.lo, r.hi, color=col, lw=1.4, zorder=2)
+            ax.scatter(r.pct, i, s=48 if p == "参政" else 34, color=col, edgecolor=SURFACE, linewidth=1.1, zorder=3)
+        ax.set_xlim(0, 100)
+        ax.set_xticks([0, 25, 50, 75, 100])
+        ax.set_title(title, fontsize=10.5, loc="left")
+        ax.tick_params(axis="y", length=0)
+    axes[0].set_yticks(range(len(parties)))
+    axes[0].set_yticklabels([f"{p}({n_of[p]}人)" for p in parties], fontsize=9.5)
+    for ax in (axes[0], axes[2]):
+        for lab in ax.get_yticklabels():
+            if lab.get_text().startswith("参政"):
+                lab.set_fontweight("bold")
+    axes[0].invert_yaxis()
+    fig.supxlabel("2025年参院選の比例でその党に入れた人のうちの割合(%)", fontsize=9.5)
     fig.tight_layout()
     fig.savefig(path, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
@@ -356,7 +437,7 @@ def fig_stacked(rows: list[tuple[str, pd.Series]], colors: dict[str, str], title
 
 
 def fig_class_attitudes(df: pd.DataFrame, cls: pd.DataFrame, core: int, path: Path) -> None:
-    """強硬な右派のクラスと回答者全体の、政策態度の賛成(1・2)の割合。"""
+    """強く反対するクラスと回答者全体の、政策態度の賛成(1・2)の割合。"""
     from lca import ITEMS
     by_col = {it.col: it.label for it in ITEMS_PROFILE}
     d = df.merge(cls, on="ID")
@@ -381,8 +462,39 @@ def fig_class_attitudes(df: pd.DataFrame, cls: pd.DataFrame, core: int, path: Pa
     ax.tick_params(axis="y", length=0)
     ax.set_xlim(0, 100)
     ax.set_xlabel("賛成(中国・格差などの対の質問では前者に近い)と答えた割合(%)", fontsize=9.5)
-    ax.set_title("強硬な右派のクラスの政策態度", fontsize=12, loc="left", pad=26)
+    ax.set_title("強く反対するクラスの政策態度", fontsize=12, loc="left", pad=26)
     ax.legend(loc="lower left", bbox_to_anchor=(0.0, 1.0), ncol=2, frameon=False, fontsize=9.5)
+    fig.tight_layout()
+    fig.savefig(path, facecolor=SURFACE, bbox_inches="tight")
+    plt.close(fig)
+
+
+
+def fig_dislike_cabinet(t: pd.DataFrame, path: Path) -> None:
+    """クラスごとに、参政党の好感度の段階別の高市内閣の支持率。"""
+    from lca import CLASS_NAMES
+    from subgroups import DISLIKE_BINS
+    order = [3, 2, 0, 1, 4]
+    colors = dict(zip([b[0] for b in DISLIKE_BINS], (C_RED, INK2, C_REIWA)))
+    offs = dict(zip([b[0] for b in DISLIKE_BINS], (0.22, 0.0, -0.22)))
+    fig, ax = plt.subplots(figsize=(8.5, 4.6), dpi=200)
+    ax.grid(True, axis="x", color=GRID, lw=0.6)
+    ax.set_axisbelow(True)
+    for i, c in enumerate(order):
+        y0 = len(order) - 1 - i
+        for name, _, _ in DISLIKE_BINS:
+            r = t[(t["cls"] == c) & (t["group"] == name)].iloc[0]
+            lo, hi = wilson(int(r.k_support), int(r.n))
+            ax.hlines(y0 + offs[name], lo * 100, hi * 100, color=colors[name], lw=1.4, alpha=0.5)
+            ax.scatter(r.support * 100, y0 + offs[name], s=40, color=colors[name], edgecolor=SURFACE,
+                       linewidth=1.2, zorder=3, label=f"参政党を{name}" if i == 0 else None)
+    ax.set_yticks(range(len(order)))
+    ax.set_yticklabels([CLASS_NAMES[c] for c in order][::-1], fontsize=10)
+    ax.tick_params(axis="y", length=0)
+    ax.set_xlim(0, 100)
+    ax.set_xlabel("高市内閣を支持する人の割合(%)。線は95%区間", fontsize=9.5)
+    ax.set_title("参政党の好き嫌い別の、高市内閣の支持率(政策態度のクラスごと)", fontsize=12, loc="left", pad=26)
+    ax.legend(loc="lower left", bbox_to_anchor=(0.0, 1.0), ncol=3, frameon=False, fontsize=9)
     fig.tight_layout()
     fig.savefig(path, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
@@ -400,17 +512,12 @@ def main() -> None:
     fig_profile(df, FIG / "fig_profile.png")
     fig_typical(pd.read_csv(OUT / "utas2026_profile.csv"), FIG / "fig_typical.png")
     fig_survey_vs_actual(survey_vs_actual(df), FIG / "fig_survey_vs_actual.png")
+    fig_dislike_cabinet(pd.read_csv(OUT / "utas2026_dislike_vs_cabinet.csv"), FIG / "fig_dislike_cabinet.png")
     raw = pd.read_csv(DATA)
     cls = pd.read_csv(OUT / "utas2026_lca.csv")
     lca_t = pd.read_csv(OUT / "utas2026_lca_sanseito.csv")
     core = int(lca_t.sort_values("share").iloc[-1]["cluster"])
-    s25 = raw[raw["Q4"] == 6]
-    pc = {"参政党": C_SANSEI, "自民党": C_REIWA, "その他の党": GRAYS[0], "支持なし・棄権など": GRAYS[1]}
-    fig_stacked([("今の支持政党", composition(s25["Q2"], {"参政党": {7}, "自民党": {1}, "その他の党": set(range(2, 14)) - {7}},
-                                              "支持なし・棄権など")),
-                 ("2026年衆院選の投票先", composition(s25["Q3"], {"参政党": {5}, "自民党": {1}, "その他の党": set(range(2, 12)) - {5}},
-                                                     "支持なし・棄権など"))],
-                pc, f"2025年参院選の比例で参政党に投票した{len(s25)}人の、今の支持政党と2026年の投票先", FIG / "fig_loyalty.png")
+    fig_loyalty_compare(loyalty_by_party(raw), FIG / "fig_loyalty_compare.png")
     c4 = raw.merge(cls, on="ID")
     c4 = c4[c4["class"] == core]
     v25 = c4[c4["Q4"].isin(VOTED)]["Q4"]
@@ -418,7 +525,7 @@ def main() -> None:
     pc2 = {"参政党": C_SANSEI, "自民党": C_REIWA, "その他の党": GRAYS[0]}
     fig_stacked([(f"2025年参院選({len(v25)}人)", composition(v25, {"参政党": {6}, "自民党": {1}}, "その他の党")),
                  (f"2026年衆院選({len(v26)}人)", composition(v26, {"参政党": {5}, "自民党": {1}}, "その他の党"))],
-                pc2, "強硬な右派のクラスで投票した人の、投票先の内訳", FIG / "fig_core_votes.png")
+                pc2, "強く反対するクラスで投票した人の、投票先の内訳", FIG / "fig_core_votes.png")
     fig_class_attitudes(raw, cls, core, FIG / "fig_core_attitudes.png")
     g = c4[c4["Q3"] == 1]
     th = g[["Q34_7", "Q34_1", "Q34_5"]]
@@ -427,7 +534,7 @@ def main() -> None:
     pc3 = {"好き(7〜10点)": C_REIWA, "中間(4〜6点)": C_MID, "嫌い(0〜3点)": C_RED}
     fig_stacked([(name, composition(th[col], lk, "嫌い(0〜3点)")) for name, col in
                  (("高市早苗", "Q34_7"), ("自民党", "Q34_1"), ("参政党", "Q34_5"))],
-                pc3, f"強硬な右派のクラスで2026年に自民党に投票した人({len(th)}人)の好き嫌い", FIG / "fig_core_ldp_thermo.png")
+                pc3, f"強く反対するクラスで2026年に自民党に投票した人({len(th)}人)の好き嫌い", FIG / "fig_core_ldp_thermo.png")
     lca_t = pd.read_csv(OUT / "utas2026_lca_sanseito.csv")
     fig_lca(lca_t, dict(zip(lca_t["cluster"], lca_t["n"])), FIG / "fig_lca.png")
     s = df[df["Q4"] == 6]

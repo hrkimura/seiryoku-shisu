@@ -169,6 +169,9 @@ def test_survey_vs_actual_shares_among_voters():
     assert t.loc["参政", "survey"] == pytest.approx(25.0)
     assert t.loc["共産", "survey"] == 0.0
     assert t.loc["参政", "actual"] == 12.55 and len(t) == len(figures.ACTUAL_2025)
+    lo, hi = figures.wilson(1, 4)
+    assert t.loc["参政", "lo"] == pytest.approx(lo * 100) and t.loc["参政", "hi"] == pytest.approx(hi * 100)
+    assert t.loc["共産", "lo"] == pytest.approx(0.0) and t.loc["共産", "hi"] > 0
 
 
 def test_significant_uses_unadjusted_for_age():
@@ -179,3 +182,165 @@ def test_significant_uses_unadjusted_for_age():
     assert figures.significant(t.loc["新聞"]) is True
     t2 = pd.DataFrame({"p_holm": [0.05], "p_adj_holm": [0.05]}, index=["男性"])
     assert figures.significant(t2.loc["男性"]) is False
+
+
+def test_dislike_vs_cabinet_groups_and_correlation():
+    d = pd.DataFrame({
+        "class": [0] * 6 + [1] * 3,
+        "Q34_5": [0, 1, 3, 5, 10, 99, 0, 4, 10],
+        "Q34_7": [2, 3, 5, 6, 9, 5, 1, 1, 1],
+        "Q1": [2, 1, 2, 1, 1, 1, 3, 2, 1],
+    })
+    t, cor = sg.dislike_vs_cabinet(d)
+    g0 = t[t["cls"] == 0].set_index("group")
+    names = [b[0] for b in sg.DISLIKE_BINS]
+    assert g0.loc[names[0], "n"] == 2 and g0.loc[names[0], "k_support"] == 1
+    assert g0.loc[names[0], "support"] == pytest.approx(0.5) and g0.loc[names[0], "takaichi"] == pytest.approx(2.5)
+    assert g0.loc[names[1], "n"] == 1 and g0.loc[names[2], "n"] == 2 and g0.loc[names[2], "support"] == 1.0
+    c = cor.set_index("cls")
+    assert c.loc[0, "n"] == 5
+    assert c.loc[0, "rho"] == pytest.approx(stats.spearmanr([0, 1, 3, 5, 10], [2, 3, 5, 6, 9]).statistic)
+    assert c.loc[0, "p"] == pytest.approx(stats.spearmanr([0, 1, 3, 5, 10], [2, 3, 5, 6, 9]).pvalue)
+    assert cor["p_holm"].tolist() == pytest.approx(lca.holm(cor["p"].to_numpy()).tolist(), nan_ok=True)
+
+
+def test_dislike_bins_cover_scale_without_overlap():
+    covered = [v for _, lo, hi in sg.DISLIKE_BINS for v in range(lo, hi + 1)]
+    assert sorted(covered) == list(range(11))
+
+
+def test_dislike_vs_cabinet_bounds_and_counts():
+    d = pd.DataFrame({
+        "class": [5] * 8,
+        "Q34_5": [0, 0, 0, 10, 11, 1, 1, 7],
+        "Q34_7": [0, 10, 4, 10, 5, 11, 3, 8],
+        "Q1": [1, 1, 3, 2, 1, 1, 99, 3],
+    })
+    t, cor = sg.dislike_vs_cabinet(d)
+    g = t.set_index("group")
+    names = [b[0] for b in sg.DISLIKE_BINS]
+    # 0点・10点は含み、11点と Q1=99 は除き、Q1=3(その他・答えない)は分母に入る
+    assert g.loc[names[0], "n"] == 3 and g.loc[names[0], "k_support"] == 2
+    assert g.loc[names[0], "support"] == pytest.approx(2 / 3)
+    assert g.loc[names[0], "takaichi"] == pytest.approx(14 / 3)
+    assert g.loc[names[1], "n"] == 0 and math.isnan(g.loc[names[1], "support"])
+    assert g.loc[names[2], "n"] == 2 and g.loc[names[2], "k_support"] == 0
+    assert cor.iloc[0]["n"] == 5
+
+
+def test_collapse3_maps_and_keeps_missing():
+    x = np.array([[0, 1, 2, 3, 4, -1]])
+    assert lca.collapse3(x).tolist() == [[0, 0, 1, 2, 2, -1]]
+
+
+def test_em_with_three_categories():
+    x, z = _two_class_data(n=400, j=6, seed=4)
+    x3 = lca.collapse3(x)
+    ll, pi, theta, resp = lca.fit(x3, 2, n_starts=3, n_cat=3)
+    assert theta.shape == (2, 6, 3)
+    assert adjusted_rand_score(z, resp.argmax(axis=1)) > 0.9
+    assert lca.n_params(2, 3) == 1 + 2 * len(lca.ITEMS) * 2
+    assert lca.bic(-10.0, 2, 20, 3) == pytest.approx(20 + lca.n_params(2, 3) * math.log(20))
+
+
+def test_restrictive_class_share_hard_and_soft():
+    d = pd.DataFrame({"Q4": [6, 6, 6, 1, 1, 2]})
+    resp = np.array([[0.9, 0.1], [0.6, 0.4], [0.2, 0.8], [0.1, 0.9], [0.2, 0.8], [0.7, 0.3]])
+    r = lca.restrictive_class_share(d, resp)
+    # クラス0: 投票者3人のうち参政2人、クラス1: 3人のうち参政1人 → 中核はクラス0
+    assert r["core"] == 0 and r["n_core"] == 3 and r["share_in_core"] == pytest.approx(2 / 3)
+    assert r["hard"] == pytest.approx(2 / 3)
+    assert r["soft"] == pytest.approx((0.9 + 0.6 + 0.2) / 3)
+
+
+def test_adjust_rating_level_removes_pure_response_style():
+    rng = np.random.default_rng(0)
+    n = 600
+    style = rng.normal(5, 2, n)
+    d = pd.DataFrame({"class": np.repeat([0, 1], n // 2)})
+    # 好き嫌いはすべて「点の付け方」だけで決まり、参政党と高市氏の間に固有の関係はない
+    for c in ["Q34_5", "Q34_7"] + sg.OTHER_THERMO:
+        d[c] = np.clip(np.round(style + rng.normal(0, 1, n)), 0, 10)
+    d["Q1"] = np.where(rng.random(n) < 0.5, 1, 2)
+    raw = stats.spearmanr(d["Q34_5"], d["Q34_7"]).statistic
+    out = sg.adjust_rating_level(d)
+    assert raw > 0.5
+    assert out["partial_rho"].abs().max() < 0.2
+    assert out["n"].tolist() == [300, 300]
+    assert out["partial_p_holm"].tolist() == pytest.approx(lca.holm(out["partial_p"].to_numpy()).tolist())
+    assert out["coef_p_holm"].tolist() == pytest.approx(lca.holm(out["coef_p"].to_numpy()).tolist())
+
+
+def test_restrictive_class_share_three_classes():
+    d = pd.DataFrame({"Q4": [6, 1, 1, 1, 6, 6, 1, 6, 1, 2, 2]})
+    resp = np.zeros((11, 3))
+    labels = [0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2]
+    resp[np.arange(11), labels] = 1.0
+    r = lca.restrictive_class_share(d, resp)
+    # 参政の割合: クラス0=1/4、クラス1=2/3、クラス2=1/4 → 中核はクラス1(人数3)
+    assert r["core"] == 1 and r["n_core"] == 3
+    assert r["hard"] == pytest.approx(2 / 4) and r["soft"] == pytest.approx(2 / 4)
+
+
+def test_adjust_rating_level_matches_direct_computation():
+    import statsmodels.formula.api as smf
+    rng = np.random.default_rng(1)
+    n = 400
+    style = rng.normal(5, 2, n)
+    shared = rng.normal(0, 1.5, n)
+    d = pd.DataFrame({"class": np.repeat([3, 7], n // 2)})
+    for c in sg.OTHER_THERMO:
+        d[c] = np.clip(np.round(style + rng.normal(0, 1, n)), 0, 10)
+    d["Q34_5"] = np.clip(np.round(style + shared + rng.normal(0, 1, n)), 0, 10)
+    d["Q34_7"] = np.clip(np.round(style + shared + rng.normal(0, 1, n)), 0, 10)
+    d["Q1"] = np.where(rng.random(n) < 1 / (1 + np.exp(-(d["Q34_5"] - 5))), 1, np.where(rng.random(n) < 0.8, 2, 3))
+    d.loc[0, "Q34_5"] = 11
+    d.loc[1, "Q34_7"] = 11
+    d.loc[2, "Q1"] = 99
+    out = sg.adjust_rating_level(d).set_index("cls")
+    t = d.iloc[3:].copy()
+    t["G"] = t[sg.OTHER_THERMO].mean(axis=1)
+    t["sup"] = (t["Q1"] == 1).astype(int)
+    for c, g in t.groupby("class"):
+        r5 = smf.ols("Q34_5 ~ G", data=g).fit().resid
+        r7 = smf.ols("Q34_7 ~ G", data=g).fit().resid
+        expect = stats.spearmanr(r5, r7)
+        m = smf.logit("sup ~ Q34_5 + G", data=g).fit(disp=0)
+        assert out.loc[c, "n"] == len(g)
+        assert out.loc[c, "partial_rho"] == pytest.approx(expect.statistic, abs=1e-9)
+        assert out.loc[c, "partial_p"] == pytest.approx(expect.pvalue, rel=1e-6)
+        assert out.loc[c, "coef"] == pytest.approx(m.params["Q34_5"], rel=1e-5)
+        assert out.loc[c, "coef_p"] == pytest.approx(m.pvalues["Q34_5"], rel=1e-4)
+        assert out.loc[c, "coef"] > 0 and out.loc[c, "partial_rho"] > 0.3
+
+
+def test_adjust_rating_level_keeps_partial_other_ratings():
+    rng = np.random.default_rng(2)
+    n = 60
+    d = pd.DataFrame({"class": [0] * n, "Q1": rng.choice([1, 2], n),
+                      "Q34_5": rng.integers(0, 11, n), "Q34_7": rng.integers(0, 11, n)})
+    for c in sg.OTHER_THERMO:
+        d[c] = rng.integers(0, 11, n)
+    d.loc[0, sg.OTHER_THERMO[0]] = 99
+    assert sg.adjust_rating_level(d).iloc[0]["n"] == n
+
+
+def test_loyalty_by_party_counts_same_party_and_ldp():
+    raw = pd.DataFrame({"Q4": [6, 6, 6, 6, 2, 2, 1],
+                        "Q2": [7, 1, 14, 7, 2, 1, 1],
+                        "Q3": [5, 1, 12, 12, 2, 3, 1]})
+    t = figures.loyalty_by_party(raw).set_index(["party", "measure"])
+    assert t.loc[("参政", "support"), "pct"] == pytest.approx(50.0)
+    assert t.loc[("参政", "ldp"), "pct"] == pytest.approx(25.0)
+    assert t.loc[("参政", "vote26"), "pct"] == pytest.approx(25.0)
+    assert t.loc[("参政", "ldp26"), "pct"] == pytest.approx(25.0)
+    assert t.loc[("参政", "support"), "n"] == 4
+    lo, hi = figures.wilson(2, 4)
+    assert t.loc[("参政", "support"), "lo"] == pytest.approx(lo * 100)
+    assert t.loc[("参政", "support"), "hi"] == pytest.approx(hi * 100)
+    assert t.loc[("立憲", "support"), "pct"] == pytest.approx(50.0)
+    assert t.loc[("立憲", "vote26"), "pct"] == pytest.approx(50.0)
+    assert ("自民", "ldp") not in t.index and ("自民", "ldp26") not in t.index
+    assert t.loc[("自民", "support"), "pct"] == pytest.approx(100.0)
+    assert t.loc[("自民", "vote26"), "pct"] == pytest.approx(100.0)
+    assert "共産" not in t.index.get_level_values("party")

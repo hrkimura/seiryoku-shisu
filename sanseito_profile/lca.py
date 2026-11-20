@@ -34,21 +34,27 @@ def encode(df: pd.DataFrame) -> np.ndarray:
     return out.astype(int)
 
 
-def _onehot(x: np.ndarray) -> np.ndarray:
+def collapse3(x: np.ndarray) -> np.ndarray:
+    """5段階(0〜4)を 賛成(0・1)/中間(2)/反対(3・4) の3段階にまとめる。欠測(-1)はそのまま。
+    回答の強さ(極端な選択肢を選ぶ癖)の影響を除いた感度分析に使う。"""
+    return np.where(x < 0, -1, np.select([x <= 1, x == 2], [0, 1], 2))
+
+
+def _onehot(x: np.ndarray, n_cat: int = N_CAT) -> np.ndarray:
     """(n, J, C) の0/1配列。欠測の行はすべて0。"""
     n, j = x.shape
-    oh = np.zeros((n, j, N_CAT))
+    oh = np.zeros((n, j, n_cat))
     rows, cols = np.nonzero(x >= 0)
     oh[rows, cols, x[rows, cols]] = 1.0
     return oh
 
 
-def em(x: np.ndarray, k: int, seed: int, n_iter: int = 500, tol: float = 1e-6):
+def em(x: np.ndarray, k: int, seed: int, n_iter: int = 500, tol: float = 1e-6, n_cat: int = N_CAT):
     rng = np.random.default_rng(seed)
-    oh = _onehot(x)
+    oh = _onehot(x, n_cat)
     n, j, _ = oh.shape
     pi = np.full(k, 1 / k)
-    theta = rng.dirichlet(np.ones(N_CAT), size=(k, j))
+    theta = rng.dirichlet(np.ones(n_cat), size=(k, j))
     prev = -np.inf
     for _ in range(n_iter):
         logp = np.log(pi)[None, :] + np.einsum("njc,kjc->nk", oh, np.log(theta + EPS))
@@ -65,11 +71,11 @@ def em(x: np.ndarray, k: int, seed: int, n_iter: int = 500, tol: float = 1e-6):
     return ll, pi, theta, resp
 
 
-def fit(x: np.ndarray, k: int, n_starts: int = 10, seed: int = 0):
+def fit(x: np.ndarray, k: int, n_starts: int = 10, seed: int = 0, n_cat: int = N_CAT):
     """乱数の初期値を n_starts 通り試し、対数尤度が最大のものを返す。"""
     best = None
     for s in range(n_starts):
-        r = em(x, k, seed * 1000 + s)
+        r = em(x, k, seed * 1000 + s, n_cat=n_cat)
         if best is None or r[0] > best[0]:
             best = r
     return best
@@ -93,12 +99,23 @@ def sanseito_by_cluster(df: pd.DataFrame, labels: np.ndarray) -> pd.DataFrame:
     return t
 
 
-def n_params(k: int) -> int:
-    return (k - 1) + k * len(ITEMS) * (N_CAT - 1)
+def n_params(k: int, n_cat: int = N_CAT) -> int:
+    return (k - 1) + k * len(ITEMS) * (n_cat - 1)
 
 
-def bic(ll: float, k: int, n: int) -> float:
-    return -2 * ll + n_params(k) * np.log(n)
+def bic(ll: float, k: int, n: int, n_cat: int = N_CAT) -> float:
+    return -2 * ll + n_params(k, n_cat) * np.log(n)
+
+
+def restrictive_class_share(d: pd.DataFrame, resp: np.ndarray) -> dict[str, float]:
+    """参政党の割合が最大のクラスについて、参政党の投票者のうちそこに入る割合を、
+    最大確率での割り当てと所属確率の平均の両方で返す。"""
+    labels = resp.argmax(axis=1)
+    t = sanseito_by_cluster(d, labels)
+    core = int(t.sort_values("share").iloc[-1]["cluster"])
+    s = (d["Q4"] == SANSEITO).to_numpy()
+    return {"core": core, "n_core": int((labels == core).sum()), "share_in_core": float(t.set_index("cluster").loc[core, "share"]),
+            "hard": float((labels[s] == core).mean()), "soft": float(resp[s, core].mean())}
 
 
 def main() -> None:
@@ -124,6 +141,16 @@ def main() -> None:
     votes = pd.crosstab(labels, d["Q4"].map(PARTY_Q4).fillna("棄権・不明"), normalize="index").round(2)
     print(votes.to_string())
     pd.DataFrame({"ID": d["ID"], "class": labels}).to_csv(OUT / "utas2026_lca.csv", index=False)
+    print("5段階: 参政党の投票者のうち中核", restrictive_class_share(d, fits[k][3]))
+    # 感度分析: 回答の強さを区別しない3段階
+    x3 = collapse3(x)
+    rows = []
+    for kk in range(4, 8):
+        r = fit(x3, kk, n_cat=3)
+        rows.append(dict(k=kk, bic=bic(r[0], kk, n, 3), **restrictive_class_share(d, r[3])))
+    sens = pd.DataFrame(rows)
+    print("3段階の感度分析"); print(sens.round(3).to_string(index=False))
+    sens.to_csv(OUT / "utas2026_lca_3cat.csv", index=False)
     t.to_csv(OUT / "utas2026_lca_sanseito.csv", index=False)
 
 

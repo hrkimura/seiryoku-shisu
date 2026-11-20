@@ -65,6 +65,59 @@ def compare_thermo(a: pd.DataFrame, b: pd.DataFrame) -> pd.DataFrame:
     return t
 
 
+# 参政党の好き嫌い(0〜10点)の段階。0〜1は「とても嫌い」に当たる強い拒否、5以上は中間から好意的
+DISLIKE_BINS = [("強く嫌う(0〜1点)", 0, 1), ("嫌う(2〜4点)", 2, 4), ("中間〜好き(5〜10点)", 5, 10)]
+
+
+def dislike_vs_cabinet(d: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """クラスごとに、参政党の好感度の段階別の高市内閣の支持率と高市氏の好感度、
+    およびクラス内での参政党と高市氏の好感度の順位相関を返す。d は class 列を持つ。"""
+    ok = d["Q34_5"].between(0, 10) & d["Q34_7"].between(0, 10) & d["Q1"].isin([1, 2, 3])
+    d = d[ok]
+    rows, cors = [], []
+    for c, g in d.groupby("class"):
+        r = stats.spearmanr(g["Q34_5"], g["Q34_7"])
+        cors.append(dict(cls=int(c), n=len(g), rho=float(r.statistic), p=float(r.pvalue)))
+        for name, lo, hi in DISLIKE_BINS:
+            x = g[g["Q34_5"].between(lo, hi)]
+            # 人数0の段階では平均が自然に NaN になる
+            rows.append(dict(cls=int(c), group=name, n=len(x), k_support=int((x["Q1"] == 1).sum()),
+                             support=(x["Q1"] == 1).mean(), takaichi=x["Q34_7"].mean()))
+    cor = pd.DataFrame(cors)
+    cor["p_holm"] = holm(cor["p"].to_numpy())
+    return pd.DataFrame(rows), cor
+
+
+# 参政党・高市氏・自民党(高市氏と強く結びつく)を除いた、好き嫌いを聞いた残りの対象
+OTHER_THERMO = ["Q34_2", "Q34_3", "Q34_4", "Q34_6", "Q34_8"]
+
+
+def adjust_rating_level(d: pd.DataFrame) -> pd.DataFrame:
+    """どの対象にも低い(高い)点を付ける回答の癖を、他の対象への好き嫌いの平均 G で調整する。
+    クラスごとに、G を除いた参政党と高市氏の好感度の偏相関(順位)と、
+    内閣支持を参政党の好感度と G で説明するロジットの参政党の係数を返す。"""
+    import numpy as np
+    import statsmodels.formula.api as smf
+    t = d[["class", "Q1", "Q34_5", "Q34_7"] + OTHER_THERMO].copy()
+    for c in ["Q34_5", "Q34_7"] + OTHER_THERMO:
+        t[c] = t[c].where(t[c].between(0, 10))
+    t["G"] = t[OTHER_THERMO].mean(axis=1)
+    t = t.dropna(subset=["Q34_5", "Q34_7", "G"])
+    t = t[t["Q1"].isin([1, 2, 3])].assign(sup=lambda x: (x["Q1"] == 1).astype(int))
+    rows = []
+    for c, g in t.groupby("class"):
+        r5 = g["Q34_5"] - np.polyval(np.polyfit(g["G"], g["Q34_5"], 1), g["G"])
+        r7 = g["Q34_7"] - np.polyval(np.polyfit(g["G"], g["Q34_7"], 1), g["G"])
+        pc = stats.spearmanr(r5, r7)
+        m = smf.logit("sup ~ Q34_5 + G", data=g).fit(disp=0)
+        rows.append(dict(cls=int(c), n=len(g), partial_rho=float(pc.statistic), partial_p=float(pc.pvalue),
+                         coef=float(m.params["Q34_5"]), coef_p=float(m.pvalues["Q34_5"])))
+    out = pd.DataFrame(rows)
+    out["partial_p_holm"] = holm(out["partial_p"].to_numpy())
+    out["coef_p_holm"] = holm(out["coef_p"].to_numpy())
+    return out
+
+
 def main() -> None:
     df = pd.read_csv(DATA)
     cls = pd.read_csv(OUT / "utas2026_lca.csv")
@@ -81,6 +134,13 @@ def main() -> None:
     t3.to_csv(OUT / "utas2026_stay_vs_ldp_thermo.csv", index=False)
     t1.to_csv(OUT / "utas2026_core_vs_moderate.csv", index=False)
     t2.to_csv(OUT / "utas2026_stay_vs_ldp.csv", index=False)
+    t4, cor = dislike_vs_cabinet(df.merge(pd.read_csv(OUT / "utas2026_lca.csv"), on="ID"))
+    print("参政党の好き嫌い別の内閣支持"); print(t4.round(2).to_string(index=False)); print(cor.round(3).to_string(index=False))
+    t4.to_csv(OUT / "utas2026_dislike_vs_cabinet.csv", index=False)
+    cor.to_csv(OUT / "utas2026_dislike_vs_takaichi_cor.csv", index=False)
+    adj = adjust_rating_level(df.merge(pd.read_csv(OUT / "utas2026_lca.csv"), on="ID"))
+    print("回答の癖で調整"); print(adj.round(3).to_string(index=False))
+    adj.to_csv(OUT / "utas2026_dislike_adjusted.csv", index=False)
 
 
 def _moderate_classes(core: int) -> list[int]:

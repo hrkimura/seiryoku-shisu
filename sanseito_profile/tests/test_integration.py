@@ -50,4 +50,5 @@ def test_lca_outputs_and_figures(tmp_path):
     figures.fig_class_attitudes(raw, pd.read_csv(pu.OUT / "utas2026_lca.csv"), 4, tmp_path / "g.png")
     figures.fig_stacked([("a", figures.composition(raw["Q2"], {"参政党": {7}}, "その他"))],
                         {"参政党": figures.C_SANSEI, "その他": figures.GRAYS[0]}, "t", tmp_path / "h.png")
-    assert all((tmp_path / f"{x}.png").stat().st_size > 5000 for x in "efgh")
+    figures.fig_dislike_cabinet(pd.read_csv(pu.OUT / "utas2026_dislike_vs_cabinet.csv"), tmp_path / "i.png")
+    assert all((tmp_path / f"{x}.png").stat().st_size > 5000 for x in "efghi")
