@@ -122,10 +122,21 @@ MAX_CHARS = 5000
 _LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 
 
+_NOTE_CAPTION_RE = re.compile(r"^\[キャプション: (.*)\]$")
+
+
 def char_count(note_text: str) -> int:
-    """note用の本文の字数。画像とキャプションの行、改行、リンクのURLは数えない(リンクは表示される文字だけ)。"""
-    return sum(len(_LINK_RE.sub(r"\1", l)) for l in note_text.splitlines()
-               if not l.startswith(("[ここに画像", "[キャプション")))
+    """note用の本文の字数。画像の行、改行、リンクのURLは数えない(リンクは表示される文字だけ)。
+
+    図の説明(キャプション)はnoteの字数に含まれるので数える。
+    """
+    total = 0
+    for line in note_text.splitlines():
+        if line.startswith("[ここに画像"):
+            continue
+        m = _NOTE_CAPTION_RE.match(line)
+        total += len(_LINK_RE.sub(r"\1", m.group(1) if m else line))
+    return total
 
 
 def export(draft_path: Path) -> Path:
