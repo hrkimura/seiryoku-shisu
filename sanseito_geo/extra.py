@@ -9,6 +9,8 @@ import analysis as an
 import tourism as tr
 
 OUT = an.OUT
+# 外国人宿泊者が特に多い北海道・東京・京都・沖縄
+BIG_TOURISM = {1, 13, 26, 47}
 
 
 def joint_effects(t: pd.DataFrame, cols: list[str], controls: list[str]) -> pd.DataFrame:
@@ -115,11 +117,15 @@ def main() -> None:
     comp = pd.concat([with_holm(joint_effects(t, nat, an.CONTROLS + an.REGION)),
                       with_holm(joint_effects(t, st, an.CONTROLS + an.REGION))])
     comp.to_csv(OUT / "composition_effects.csv", index=False)
-    p = prefecture_table(t, tr.pref_nights(tr.RAW / "2019.xlsx"), tr.pref_nights(tr.RAW / "2024.xlsx"))
     rows = []
-    for x, ctrl in (("log_fn_now", []), ("d_fn", []), ("log_fn_now", ["share22", "d_fshare"])):
-        c, lo, hi = prefecture_effect(p, x, ctrl)
-        rows.append({"x": x, "controls": "+".join(ctrl), "coef": c, "lo": lo, "hi": hi})
+    for period, (y0, y1) in {"2022→2025": ("2022", "2025"), "2019→2024": ("2019", "2024")}.items():
+        p = prefecture_table(t, tr.pref_nights(tr.RAW / f"{y0}.xlsx"), tr.pref_nights(tr.RAW / f"{y1}.xlsx"))
+        for x, ctrl, drop in (("log_fn_now", [], False), ("d_fn", [], False), ("d_fn", [], True),
+                              ("d_fn", ["share22", "d_fshare"], False)):
+            d = p[~p["pref"].isin(BIG_TOURISM)] if drop else p
+            c, lo, hi = prefecture_effect(d, x, ctrl)
+            rows.append({"period": period, "x": x, "controls": "+".join(ctrl), "without_big4": drop,
+                         "coef": c, "lo": lo, "hi": hi})
     pd.DataFrame(rows).to_csv(OUT / "tourism_effects.csv", index=False)
     density_split(t).to_csv(OUT / "density_split.csv", index=False)
     reiwa_overlap(t).to_csv(OUT / "reiwa_overlap.csv", index=False)

@@ -79,7 +79,11 @@ def build() -> pd.DataFrame:
     groups = un.composite_groups(u25)
     u25 = un.regroup(u25, groups, ["valid", "votes"])
     u22 = un.regroup(un.to_units(s22), groups, ["valid", "votes"])
-    r22 = un.regroup(un.to_units(el.shares(el.load_year("2022"), "れいわ新選組")), groups, ["valid", "votes"])
+    l22 = el.load_year("2022")
+    l25 = el.fill_blanks(el.load_year("2025"), el.pref_party_totals(RAW / "sangiin_2025_pref_party.xlsx"))
+    r22 = un.regroup(un.to_units(el.shares(l22, "れいわ新選組")), groups, ["valid", "votes"])
+    ldp22 = un.regroup(un.to_units(el.shares(l22, "自由民主党")), groups, ["valid", "votes"])
+    ldp25 = un.regroup(un.to_units(el.shares(l25, "自由民主党")), groups, ["valid", "votes"])
 
     juki = juki_pair("2022").merge(juki_pair("2025"), on=["pref", "name"], how="outer")
     codes = un.load_juki(RAW / "juki/2025_total.xlsx")[["pref", "name", "code"]]
@@ -95,6 +99,9 @@ def build() -> pd.DataFrame:
         m, on=["pref", "unit"], how="left")
     t = t.merge(r22.rename(columns={"votes": "reiwa_votes22"})[["pref", "unit", "reiwa_votes22"]], on=["pref", "unit"])
     t["reiwa22"] = t["reiwa_votes22"] / t["valid22"] * 100
+    for name, u in (("ldp22", ldp22), ("ldp25", ldp25)):
+        t = t.merge(u.assign(**{name: u["votes"] / u["valid"] * 100})[["pref", "unit", name]], on=["pref", "unit"])
+    t["d_ldp"] = t["ldp25"] - t["ldp22"]
     t["share22"] = t["votes22"] / t["valid22"] * 100
     t["share25"] = t["votes25"] / t["valid25"] * 100
     t["d_share"] = t["share25"] - t["share22"]

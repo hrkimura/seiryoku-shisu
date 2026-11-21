@@ -232,3 +232,18 @@ def test_unused_missing_columns_do_not_drop_rows():
     assert analysis.tsls(t, "y", "d", "z", ["c"], weight="w").n == 60
     t.loc[1, "z"] = np.nan
     assert analysis.tsls(t, "y", "d", "z", ["c"], weight="w").n == 59
+
+
+def test_pref_party_district_reads_total_columns(tmp_path):
+    rows = [["（５）都道府県別党派別得票数（選挙区）", None, None, None, None, None, None],
+            [None, None, "自由民主党", None, None, "参政党", None],
+            [None, "男", "女", "計", "男", "女", "計"],
+            ["北海道", "1,000", None, "1,000", None, "200", "200"],
+            ["青森県", None, "300", "300", "50", None, "50"],
+            ["合計", None, None, "1,300", None, None, "250"]]
+    f = tmp_path / "d.xlsx"
+    pd.DataFrame(rows).to_excel(f, header=False, index=False)
+    t = el.pref_party_district(f).set_index(["pref", "party"])["votes"]
+    assert t[(1, "自由民主党")] == 1000 and t[(1, "参政党")] == 200
+    assert t[(2, "自由民主党")] == 300 and t[(2, "参政党")] == 50
+    assert len(t) == 4

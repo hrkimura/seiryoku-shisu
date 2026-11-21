@@ -132,3 +132,34 @@ def fill_blanks(long: pd.DataFrame, pref_totals: pd.DataFrame) -> pd.DataFrame:
         for party, v in (tot - have.reindex(tot.index, fill_value=0.0)).items():
             extra.append({"pref": pref, "area": name, "party": party, "votes": v})
     return pd.concat([filled, pd.DataFrame(extra)], ignore_index=True)
+
+
+def pref_party_district(path: Path) -> pd.DataFrame:
+    """総務省「都道府県別党派別得票数(選挙区)」から、都道府県×政党の得票数。
+
+    政党ごとに「男・女・計」の3列が並び、政党名は3列のどこかに中央寄せで書かれているので、
+    「計」の列とその左2列の中から政党名を探す。
+    """
+    d = pd.read_excel(path, header=None)
+    rows, totals, names_row = [], {}, None
+    for i in range(len(d)):
+        cells = [unicodedata.normalize("NFKC", str(v)).strip() if isinstance(v, str) else None for v in d.iloc[i]]
+        if any(c and c not in ("男", "女", "計", "区分", "都道府県") and "得票" not in c and c not in PREF_NAMES
+               and not re.match(r"^[\d,.\s]+$", c) for c in cells[1:]):
+            names_row = cells
+            continue
+        if "計" in cells and names_row is not None:
+            totals = {}
+            for j, c in enumerate(cells):
+                if c == "計":
+                    name = next((names_row[k] for k in (j, j - 1, j - 2) if k >= 1 and names_row[k]), None)
+                    if name:
+                        totals[j] = norm_party(name)
+            continue
+        first = cells[0]
+        if first and re.sub(r"\s", "", first) in PREF_NAMES and totals:
+            pref = PREF_NAMES.index(re.sub(r"\s", "", first)) + 1
+            for j, p in totals.items():
+                v = to_number(d.iat[i, j])
+                rows.append({"pref": pref, "party": p, "votes": 0.0 if v != v else v})
+    return pd.DataFrame(rows)

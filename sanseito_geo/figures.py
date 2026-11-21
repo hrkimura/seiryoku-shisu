@@ -108,8 +108,6 @@ def fig_groups(c: pd.DataFrame, path: Path) -> None:
 
 
 def fig_tourism(p: pd.DataFrame, path: Path) -> None:
-    import extra
-
     names = dict(enumerate(["北海道", "青森", "岩手", "宮城", "秋田", "山形", "福島", "茨城", "栃木", "群馬", "埼玉", "千葉",
                             "東京", "神奈川", "新潟", "富山", "石川", "福井", "山梨", "長野", "岐阜", "静岡", "愛知", "三重",
                             "滋賀", "京都", "大阪", "兵庫", "奈良", "和歌山", "鳥取", "島根", "岡山", "広島", "山口", "徳島",
@@ -117,16 +115,14 @@ def fig_tourism(p: pd.DataFrame, path: Path) -> None:
     fig, ax = plt.subplots(figsize=(7, 4.6), dpi=200)
     ax.grid(True, color=GRID, lw=0.6)
     ax.set_axisbelow(True)
-    ax.set_xscale("log")
-    ax.scatter(p["fn_now"], p["d_share"], s=24, color=C_SANSEI, edgecolor=SURFACE, zorder=3)
+    ax.scatter(p["d_fn"], p["d_share"], s=24, color=C_SANSEI, edgecolor=SURFACE, zorder=3)
     for r in p.itertuples():
-        if r.fn_now > 2 or r.d_share > 11 or r.d_share < 7.5:
-            ax.annotate(names[r.pref], (r.fn_now, r.d_share), xytext=(4, 2), textcoords="offset points", fontsize=8,
+        if r.d_fn > 1.5 or r.d_share > 11 or r.d_share < 7.5:
+            ax.annotate(names[r.pref], (r.d_fn, r.d_share), xytext=(4, 2), textcoords="offset points", fontsize=8,
                         color=INK2)
-    c, lo, hi = extra.prefecture_effect(p, "log_fn_now", [])
-    ax.set_xlabel("人口1人あたりの外国人延べ宿泊者数(2024年、泊、対数目盛)", fontsize=9.5)
+    ax.set_xlabel("人口1人あたりの外国人延べ宿泊者数の増加(2022→2025年、泊)", fontsize=9.5)
     ax.set_ylabel("参政党の得票率の伸び(ポイント)", fontsize=9.5)
-    ax.set_title("都道府県の外国人宿泊者の多さと、参政党の伸び", fontsize=12, loc="left")
+    ax.set_title("都道府県の外国人宿泊者の増え方と、参政党の伸び", fontsize=12, loc="left")
     fig.tight_layout()
     fig.savefig(path, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
@@ -135,37 +131,49 @@ def fig_tourism(p: pd.DataFrame, path: Path) -> None:
 PLACES = ["倶知安町", "ニセコ町", "千歳市", "大泉町", "伊勢崎市", "太田市", "常総市", "真岡市", "川口市", "新宿区"]
 
 
-def place_predictions(t: pd.DataFrame, places: list[str]) -> pd.DataFrame:
-    """外国人以外の地域の特徴(と都道府県)から予測した伸びと、実際の伸び。"""
+def predictions(t: pd.DataFrame) -> pd.DataFrame:
+    """外国人の変数を使わず、県・2022年の得票率・人口・地域の特徴から予測した伸びと、実際の伸び(全単位)。"""
     ctrl = ["share22", "log_pop22"] + analysis.REGION
     d = analysis.complete(t, ["d_share", "valid25"] + ctrl).reset_index(drop=True)
     x = analysis.design(d, ctrl)
     w = d["valid25"].to_numpy(float)
     b = np.linalg.pinv(x.T @ (x * w[:, None])) @ (x.T @ (w * d["d_share"].to_numpy(float)))
-    d["pred"] = x @ b
+    return d.assign(pred=x @ b)
+
+
+def place_predictions(t: pd.DataFrame, places: list[str]) -> pd.DataFrame:
+    d = predictions(t)
     return d[d["unit"].isin(places)].set_index("unit").loc[[p for p in places if p in set(d["unit"])],
                                                           ["d_share", "pred", "fshare22", "fshare25"]]
 
 
+# ラベルが重ならないよう、町ごとに手で決めた位置(点からのずれ、ポイント単位)
+PLACE_OFFSET = {"倶知安町": (-60, 22), "ニセコ町": (14, -16), "千歳市": (-96, -16), "大泉町": (6, 10), "伊勢崎市": (8, 12),
+                "太田市": (14, -18), "常総市": (-96, 14), "真岡市": (14, -20), "川口市": (-110, 6), "新宿区": (-96, -4)}
+
+
 def fig_places(t: pd.DataFrame, path: Path) -> None:
-    r = place_predictions(t, PLACES)
-    avg = np.average(t["d_share"], weights=t["valid25"])
-    fig, ax = plt.subplots(figsize=(7.5, 0.42 * len(r) + 1.4), dpi=200)
-    ax.grid(True, axis="x", color=GRID, lw=0.6)
+    d = predictions(t)
+    r = d[d["unit"].isin(PLACES)].set_index("unit")
+    fig, ax = plt.subplots(figsize=(7.2, 6.8), dpi=200)
+    ax.grid(True, color=GRID, lw=0.6)
     ax.set_axisbelow(True)
-    ax.axvline(avg, color=INK2, lw=1, ls="--")
-    for i, (u, x) in enumerate(r.iterrows()):
-        ax.hlines(i, min(x["pred"], x["d_share"]), max(x["pred"], x["d_share"]), color=AXIS, lw=2)
-        ax.scatter(x["pred"], i, s=40, color=SURFACE, edgecolor=INK2, linewidth=1.5, zorder=3,
-                   label="地域の特徴から予想される伸び" if i == 0 else None)
-        ax.scatter(x["d_share"], i, s=40, color=C_SANSEI, edgecolor=SURFACE, zorder=4,
-                   label="実際の伸び" if i == 0 else None)
-    ax.set_yticks(range(len(r)))
-    ax.set_yticklabels([f"{u}(外国人 {x.fshare22:.0f}→{x.fshare25:.0f}%)" for u, x in r.iterrows()], fontsize=9)
-    ax.invert_yaxis()
-    ax.tick_params(axis="y", length=0)
-    ax.set_xlabel("参政党の得票率の伸び(ポイント、破線は全国平均)", fontsize=9.5)
-    ax.legend(loc="lower left", bbox_to_anchor=(0.0, 1.0), ncol=2, frameon=False, fontsize=9)
+    ax.scatter(d["pred"], d["d_share"], s=6, color=AXIS, alpha=0.6, linewidth=0, zorder=1, label="全国の市区町村")
+    lim = (1, 21)
+    ax.plot(lim, lim, color=INK2, lw=1, ls="--", zorder=2)
+    ax.annotate("予想どおり", (19.5, 19.5), xytext=(-4, 6), textcoords="offset points", rotation=45,
+                rotation_mode="anchor", fontsize=9, color=INK2, ha="right")
+    ax.scatter(r["pred"], r["d_share"], s=40, color=C_SANSEI, edgecolor=SURFACE, zorder=3, label="外国人の多さで話題の町")
+    for u, x in r.iterrows():
+        ax.annotate(f"{u}({x.fshare22:.0f}→{x.fshare25:.0f}%)", (x["pred"], x["d_share"]),
+                    xytext=PLACE_OFFSET.get(u, (6, 2)), textcoords="offset points", fontsize=8.5, color=INK,
+                    arrowprops={"arrowstyle": "-", "color": INK2, "lw": 0.6})
+    ax.set_xlim(*lim)
+    ax.set_ylim(*lim)
+    ax.set_aspect("equal")
+    ax.set_xlabel("外国人の変数を使わずに予想した伸び(ポイント)", fontsize=9.5)
+    ax.set_ylabel("実際の伸び(ポイント)", fontsize=9.5)
+    ax.legend(loc="upper left", frameon=False, fontsize=9)
     fig.tight_layout()
     fig.savefig(path, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
@@ -211,7 +219,7 @@ def main() -> int:
     import tourism as tr
 
     fig_groups(pd.read_csv(OUT / "composition_effects.csv"), FIG / "fig_groups.png")
-    fig_tourism(extra.prefecture_table(t, tr.pref_nights(tr.RAW / "2019.xlsx"), tr.pref_nights(tr.RAW / "2024.xlsx")),
+    fig_tourism(extra.prefecture_table(t, tr.pref_nights(tr.RAW / "2022.xlsx"), tr.pref_nights(tr.RAW / "2025.xlsx")),
                 FIG / "fig_tourism.png")
     fig_places(t, FIG / "fig_places.png")
     fig_drivers(t, FIG / "fig_drivers.png")
