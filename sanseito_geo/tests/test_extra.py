@@ -172,3 +172,23 @@ def test_holm_matches_definition():
     h = extra.with_holm(r)
     assert h["p"].tolist() == pytest.approx([0.05, 1.0], abs=1e-3)
     assert h["p_holm"].tolist() == pytest.approx([0.1, 1.0], abs=1e-3)
+
+
+def test_level_effect_and_vote_distribution():
+    rng = np.random.default_rng(5)
+    n = 300
+    t = pd.DataFrame({"pref": np.repeat(np.arange(10), 30), "valid25": 1.0, "fshare25": rng.uniform(0, 8, n),
+                      "log_pop22": rng.normal(size=n)})
+    for c in analysis.REGION:
+        t[c] = rng.normal(size=n)
+    t["share25"] = 10 + 0.2 * t["fshare25"] + rng.normal(scale=0.1, size=n)
+    r = extra.level_effect(t)
+    assert r["spec"].tolist() == ["都道府県の違いをそろえる", "地域の特徴もそろえる"]
+    assert r["coef"].between(0.18, 0.22).all() and (r["lo"] < r["hi"]).all()
+    d = pd.DataFrame({"fshare25": [0.5, 2.0, 4.0, 6.0], "votes25": [10.0, 20.0, 30.0, 40.0],
+                      "pop25": [1.0, 1.0, 1.0, 1.0]})
+    v = extra.vote_distribution(d, (1, 3, 5)).set_index("below")
+    assert v.loc[1, "votes_pct"] == pytest.approx(10.0) and v.loc[3, "votes_pct"] == pytest.approx(30.0)
+    assert v.loc[5, "votes_pct"] == pytest.approx(60.0) and v.loc[5, "pop_pct"] == pytest.approx(75.0)
+    d.loc[0, "fshare25"] = 1.0
+    assert extra.vote_distribution(d, (1,)).loc[0, "votes_pct"] == 0

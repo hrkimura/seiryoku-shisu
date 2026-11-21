@@ -89,6 +89,23 @@ def reiwa_overlap(t: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def level_effect(t: pd.DataFrame) -> pd.DataFrame:
+    """2025年の外国人の割合が1ポイント高い地域での、2025年の参政党の得票率の違い(ある時点の多さどうしの比較)。"""
+    rows = []
+    for name, ctrl in (("都道府県の違いをそろえる", ["log_pop22"]), ("地域の特徴もそろえる", ["log_pop22"] + an.REGION)):
+        fit = an.ols(t, "share25", "fshare25", ctrl)
+        rows.append({"spec": name, "coef": fit.coef, "lo": fit.ci[0], "hi": fit.ci[1], "n": fit.n})
+    return pd.DataFrame(rows)
+
+
+def vote_distribution(t: pd.DataFrame, thresholds=(1, 3, 5)) -> pd.DataFrame:
+    """外国人の割合(2025年)が閾値未満の地域が、参政党の票と人口に占める割合(%)。"""
+    return pd.DataFrame([{"below": th,
+                          "votes_pct": t.loc[t["fshare25"] < th, "votes25"].sum() / t["votes25"].sum() * 100,
+                          "pop_pct": t.loc[t["fshare25"] < th, "pop25"].sum() / t["pop25"].sum() * 100}
+                         for th in thresholds])
+
+
 def main() -> None:
     t = an.prepare(pd.read_csv(OUT / "units.csv", dtype={"codes": str}))
     ch = pd.read_csv(OUT / "composition_changes.csv")
@@ -106,7 +123,10 @@ def main() -> None:
     pd.DataFrame(rows).to_csv(OUT / "tourism_effects.csv", index=False)
     density_split(t).to_csv(OUT / "density_split.csv", index=False)
     reiwa_overlap(t).to_csv(OUT / "reiwa_overlap.csv", index=False)
-    for f in ("composition_effects", "tourism_effects", "density_split", "reiwa_overlap"):
+    level_effect(t).to_csv(OUT / "level_effect.csv", index=False)
+    vote_distribution(t).to_csv(OUT / "vote_distribution.csv", index=False)
+    for f in ("composition_effects", "tourism_effects", "density_split", "reiwa_overlap", "level_effect",
+              "vote_distribution"):
         print(pd.read_csv(OUT / f"{f}.csv").round(3).to_string(index=False))
 
 
